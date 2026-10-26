@@ -187,7 +187,7 @@ class CKCInputController: IMKInputController {
     /// Active special key mirrors DigitSource:
     /// - .numpad → Num Lock (KeypadClear)
     /// - .numberRow → Grave / backtick (` / ~)
-    /// Idle → dual marked "?" + 標點; composing → 萬能鍵 "?"; punctMode → next 標點 page.
+    /// Idle → 標點 only (no marked "?"); composing → 萬能鍵 "?"; punctMode → next 標點 page.
     private func isActiveSpecialKeyEvent(keyCode: Int, characters: String, rawFlags: NSEvent.ModifierFlags) -> Bool {
         switch StatusConsole.shared.digitSource {
         case .numpad:
@@ -205,9 +205,9 @@ class CKCInputController: IMKInputController {
     }
 
     /// Handle active special key:
-    /// - punctMode → next 標點 page (keeps marked "?" if dual idle)
+    /// - punctMode → next 標點 page
     /// - already composing (digits/`?` in buffer) → append another "?" only (no 標點)
-    /// - idle (empty buffer, first keystroke) → dual: marked "?" + 標點 panel together
+    /// - idle (empty buffer, first keystroke) → 標點 only (1st key cannot be wildcard)
     @discardableResult
     private func handleActiveSpecialKey(client: Any?) -> Bool {
         let via = specialKeyLabel()
@@ -215,10 +215,6 @@ class CKCInputController: IMKInputController {
             let pages = punctPages
             let pageCount = max(pages.count, 1)
             punctPageIndex = (punctPageIndex + 1) % pageCount
-            // Keep marked "?" if present; only refresh 標點 chrome.
-            if !buffer.isEmpty {
-                updateMarked(client: client)
-            }
             showPunctCandidates(client: client)
             ckcLog("\(via) special → punct page \(punctPageIndex + 1)/\(pageCount) buffer=\(buffer)")
             return true
@@ -227,8 +223,9 @@ class CKCInputController: IMKInputController {
             // Mid-compose: 萬能鍵 only — never reopen 標點.
             return appendWildcardMarked(client: client, via: via)
         }
-        // Idle / first keystroke: dual UI — marked "?" AND 標點 by caret.
-        enterIdleSpecialDual(client: client, via: via)
+        // Idle / first keystroke: 標點 only — no leading marked "?".
+        enterPunctMode(client: client)
+        ckcLog("\(via) special → punctMode ON (idle, no wildcard)")
         return true
     }
 
@@ -254,8 +251,14 @@ class CKCInputController: IMKInputController {
     }
 
     /// Append "?" into marked composition (same path as digits). Dismisses 標點 if open.
+    /// First code unit cannot be wildcard — requires non-empty buffer.
     @discardableResult
     private func appendWildcardMarked(client: Any?, via: String = "wildcard") -> Bool {
+        if buffer.isEmpty {
+            // Idle: do not start compose with "?". Keep 標點 if open; else pass through.
+            ckcLog("\(via) → wildcard blocked (1st key cannot be wildcard) punct=\(punctMode ? 1 : 0)")
+            return punctMode
+        }
         if punctMode {
             exitPunctMode()
             ckcLog("\(via) dismissed punct → compose")
@@ -353,8 +356,8 @@ class CKCInputController: IMKInputController {
 
         let typedChars = event.characters ?? ""
 
-        // 萬能鍵 BEFORE 字-end / punct: "?" and `/~ ONLY compose (never open 標點).
-        // Dismisses punct if visible; "?" stays in marked buffer; digits may follow.
+        // 萬能鍵 BEFORE 字-end / punct: "?" and `/~ ONLY append when already composing.
+        // 1st key cannot be wildcard (appendWildcardMarked no-ops / passes through if buffer empty).
         // Use rawFlags for Shift — never let Shift block 萬能鍵 (Shift+/ = "?")
         let wildFlags = flags.union(rawFlags.intersection([.shift]))
         // In 鍵盤 mode Grave/`/~ is the active special key — do not steal it as bare wildcard.
@@ -400,7 +403,7 @@ class CKCInputController: IMKInputController {
             return true
         }
 
-        // Esc → clear both 標點 and composition (dual idle "?" + punct included)
+        // Esc → clear both 標點 and composition
         if keyCode == kVK_Escape {
             if punctMode || composing {
                 clearComposition(client: sender)
@@ -421,7 +424,7 @@ class CKCInputController: IMKInputController {
 
         // Active special key (DigitSource gate):
         // 小鍵盤 → Num Lock; 鍵盤 → Grave / backtick (` / ~).
-        // Idle (first key) → marked "?" + 標點; composing → 萬能鍵 "?"; punctMode → next page.
+        // Idle (first key) → 標點 only (no "?"); composing → 萬能鍵 "?"; punctMode → next page.
         // Number-row Minus is NOT special — page-prev when candidates visible.
         if isActiveSpecialKeyEvent(keyCode: keyCode, characters: chars, rawFlags: rawFlags) {
             ckcLog(String(format: "specialKey src=%@ code=%d composing=%d punctMode=%d",
@@ -448,7 +451,7 @@ class CKCInputController: IMKInputController {
                 return true
             }
             if keyCode == Int(kVK_ANSI_KeypadDecimal) || keyCode == 0x41 {
-                // Dismiss 標點 only; keep marked "?" (dual idle) so digits can continue.
+                // Dismiss 標點; idle punct has empty buffer so nothing to restore.
                 exitPunctMode()
                 if !buffer.isEmpty {
                     refreshCandidates()
@@ -457,22 +460,15 @@ class CKCInputController: IMKInputController {
                 return true
             }
             if let digitInfo = classifyDigit(keyCode: keyCode, characters: chars, rawFlags: rawFlags), !blocked {
-                // Wildcard composition in progress (buffer has "?") → dismiss 標點, fall through to digit compose.
-                // Intentional punct (Minus opener, empty buffer) still picks marks.
-                if buffer.contains("?") {
-                    exitPunctMode()
-                    ckcLog("digit after wildcard dismissed punct → compose digit=\(digitInfo.value) buffer=\(buffer)")
-                    // fall through to composition digit path below (punctMode now false)
-                } else {
-                    let d = digitInfo.value
-                    let page = pages[max(0, min(punctPageIndex, pages.count - 1))]
-                    let idx: Int
-                    if (1...9).contains(d) { idx = d - 1 }
-                    else if d == 0 { idx = min(8, max(page.count - 1, 0)) }
-                    else { return true }
-                    if idx < page.count { commitPunct(page[idx], client: sender) }
-                    return true
-                }
+                // Pure punct mode: 1–9 (and 0) choose the mark — never wildcard-continue.
+                let d = digitInfo.value
+                let page = pages[max(0, min(punctPageIndex, pages.count - 1))]
+                let idx: Int
+                if (1...9).contains(d) { idx = d - 1 }
+                else if d == 0 { idx = min(8, max(page.count - 1, 0)) }
+                else { return true }
+                if idx < page.count { commitPunct(page[idx], client: sender) }
+                return true
             }
             if keyCode == kVK_Space || keyCode == kVK_Return || keyCode == kVK_ANSI_KeypadEnter {
                 if let pick = CandidateWindow.shared.selectedCandidate {
@@ -655,7 +651,7 @@ class CKCInputController: IMKInputController {
             }
 
             // Composition digit — only from active source, no modifiers; never a 7th digit.
-            // Digit after "?" (or any compose) dismisses 標點 if it was left open.
+            // If 標點 was somehow still open, dismiss before appending.
             if fromActiveSource && flags.isEmpty {
                 if punctMode {
                     exitPunctMode()
@@ -810,31 +806,7 @@ class CKCInputController: IMKInputController {
 
     // MARK: - Punctuation (Windows CKC keypad "-")
 
-    /// Idle active special key (first keystroke only): marked "?" + 標點 together.
-    /// Digits afterward dismiss 標點 and continue wildcard compose (e.g. "?3").
-    /// Space/Return commits highlighted punct and clears "?". Esc clears both.
-    private func enterIdleSpecialDual(client: Any?, via: String) {
-        punctMode = true
-        punctPageIndex = 0
-        buffer = "?"
-        lookKind = .characters
-        charCandidates = []
-        phraseCandidates = []
-        selectedIndex = 0
-        if DictionaryStore.shared.punctuationList.isEmpty {
-            DictionaryStore.shared.loadPunctuationTable()
-        }
-        // Marked "?" first (same look as typing a digit), then 標點 chrome — do not wipe buffer.
-        updateMarked(client: client)
-        showPunctCandidates(client: client)
-        ckcLog(String(format: "%@ special → dual idle marked '?' + punctMode page %d/%d items=%d visible=%d",
-                      via as NSString,
-                      punctPageIndex + 1, punctPages.count,
-                      DictionaryStore.shared.punctuationList.count,
-                      CandidateWindow.shared.isVisible ? 1 : 0))
-    }
-
-    /// Open 標點 with empty buffer (legacy / non-dual callers). Clears composition.
+    /// Open 標點 with empty buffer (idle special key). Clears composition; no marked "?".
     private func enterPunctMode(client: Any?) {
         punctMode = true
         punctPageIndex = 0
@@ -866,7 +838,7 @@ class CKCInputController: IMKInputController {
         CandidateWindow.shared.hide()
     }
 
-    /// Show 標點 CandidateWindow. Does not clear `buffer` or marked text (dual idle keeps "?").
+    /// Show 標點 CandidateWindow. Idle punct keeps buffer empty (no leading marked "?").
     private func showPunctCandidates(client: Any?) {
         let pages = punctPages
         guard !pages.isEmpty else {
@@ -881,7 +853,6 @@ class CKCInputController: IMKInputController {
         selectedIndex = 0
         let clientObj = (client as AnyObject?) ?? currentClient
         // Same CandidateWindow path/chrome/caret positioning as 字/詞 — not parked by StatusConsole.
-        // Title stays 標點; marked text in the field is independently buffer (often "?").
         CandidateWindow.shared.show(
             composition: "標點 \(punctPageIndex + 1)/\(pages.count)",
             chars: page,

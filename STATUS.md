@@ -1,6 +1,6 @@
 # Ckcsys macOS IMK — STATUS
 
-Time: 2026-10-27 02:12 Asia/Hong_Kong (UTC+8)
+Time: 2026-10-27 02:20 Asia/Hong_Kong (UTC+8)
 Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
 
 ## Fixed this build (two bugs)
@@ -26,7 +26,7 @@ Fixes:
 - Removed park-above-console positioning; caret/client geometry first, then mouse, never StatusConsole as primary.
 
 ## Product rules (unchanged)
-- Idle dual special: Num Lock (小鍵盤) or Grave/`/`~ (鍵盤); Minus = page-prev when composing.
+- Idle special: Num Lock (小鍵盤) or Grave/`/`~ (鍵盤) → 標點 only (no marked `?`); Minus = page-prev when composing.
 - After T/* or full 6-digit: 1–9 phrases; after Y//: 1–9 chars.
 - DigitSource XOR; StatusConsole 縱·繁·小鍵盤/鍵盤.
 - Keypad Decimal = 刪碼; optional wildcard `?` always; `` `/~ `` optional wildcard only in 小鍵盤 (in 鍵盤 they are the special key).
@@ -36,8 +36,8 @@ Fixes:
 Debug log: `/tmp/ckc-ime.log`
 
 ## 萬能鍵 (2026-10-27 01:55 HKT)
-- Both **`?`** (Shift+/) and `` `/~ `` append `?` into the **marked** composition buffer (same as digits).
-- Digits may continue after `?` (e.g. `1?` → `1?3`); cap 6; wildcard lookup updates.
+- Both **`?`** (Shift+/) and `` `/~ `` append `?` into the **marked** composition buffer **only when already composing** (1st key cannot be wildcard).
+- Digits may continue after `?` (e.g. `1?` → `1?3`); cap 6; wildcard lookup updates. Leading `?` alone is blocked.
 - `return true` so `?` is never inserted as committed document text until Space/pick.
 - Handled **before** 字-end so Shift+/ is not mistaken for bare `/`.
 - Num Lock remains 標點 only.
@@ -54,17 +54,16 @@ DigitSource-gated mirror:
 - **鍵盤** → number-row Minus: idle=標點, composing=`?`
 Log: `specialKey src=…`, `NumLock/Minus special → punctMode ON (idle)`, `NumLock/Minus → wildcard marked`.
 
-## Special key dual idle (2026-10-27 02:10 HKT)
-Idle / first keystroke of active special key (Num Lock if 小鍵盤, number-row Minus if 鍵盤):
-- Marked `?` in the text field **and** 標點 CandidateWindow together.
-- Digits (active source) dismiss 標點, keep `?`, append digit → e.g. `?3` wildcard compose.
-- Space/Return commits highlighted punct and clears `?`.
-- Esc clears both.
-- Already composing (buffer non-empty) + special key → append `?` only, no 標點.
-- punctMode special key → next 標點 page (keeps marked `?` if dual).
-
 ## Special key → Grave in 鍵盤 (2026-10-27 02:12 HKT)
-- **小鍵盤** special stays **Num Lock** (unchanged dual idle / composing `?` / punct page).
-- **鍵盤** special is now **Grave / backtick** (`` ` `` and `~`, kVK_ANSI_Grave 0x32) — same dual roles as Num Lock.
-- **Minus** restored to **向前翻頁** (number-row + keypad) when candidates visible; idle Minus is not special.
+- **小鍵盤** special stays **Num Lock**.
+- **鍵盤** special is **Grave / backtick** (`` ` `` and `~`, kVK_ANSI_Grave 0x32).
+- **Minus** = **向前翻頁** when candidates visible; idle Minus is not special.
 - Log label: `Grave special → …` in numberRow mode.
+
+## Idle special = 標點 only (2026-10-27 02:20 HKT)
+Andrew: **1st key cannot be a wildcard.**
+- Idle / first keystroke of active special (Num Lock if 小鍵盤, Grave if 鍵盤) → **標點 only**; buffer stays empty — **no** marked `?` in the text field. `enterIdleSpecialDual` removed.
+- While 標點 open: digits **1–9** commit that punctuation mark (not wildcard-continue).
+- Already composing (buffer non-empty) + special → append `?` only, no 標點.
+- Optional keyboard `?` / `` `/~ ``: `appendWildcardMarked` requires `!buffer.isEmpty`; idle `?` does not start composition.
+- punctMode special key → next 標點 page.
