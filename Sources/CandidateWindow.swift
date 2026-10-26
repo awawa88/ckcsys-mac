@@ -175,7 +175,7 @@ final class CandidateWindow: NSPanel {
             row.widthAnchor.constraint(equalTo: leftStack.widthAnchor).isActive = true
             row.heightAnchor.constraint(equalToConstant: 28).isActive = true
         }
-        leftColumnBox = wrapColumn(leftStack, minWidth: charColWidth)
+        leftColumnBox = wrapColumn(leftStack, title: "選字", minWidth: charColWidth)
 
         // Right column: phrases numbered 1–9 (pick after T/*)
         rightStack = NSStackView()
@@ -191,7 +191,7 @@ final class CandidateWindow: NSPanel {
             row.widthAnchor.constraint(equalTo: rightStack.widthAnchor).isActive = true
             row.heightAnchor.constraint(equalToConstant: 28).isActive = true
         }
-        rightColumnBox = wrapColumn(rightStack, minWidth: phraseColWidth)
+        rightColumnBox = wrapColumn(rightStack, title: "選詞", minWidth: phraseColWidth)
 
         // Vertical separator
         let separator = NSBox()
@@ -236,17 +236,29 @@ final class CandidateWindow: NSPanel {
         contentView = container
     }
 
-    private func wrapColumn(_ stack: NSStackView, minWidth: CGFloat) -> NSView {
+    private func wrapColumn(_ stack: NSStackView, title: String, minWidth: CGFloat) -> NSView {
         let box = NSView()
         box.translatesAutoresizingMaskIntoConstraints = false
         stack.translatesAutoresizingMaskIntoConstraints = false
-        box.addSubview(stack)
+
+        let titleLabel = NSTextField(labelWithString: title)
+        titleLabel.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
+        titleLabel.textColor = .secondaryLabelColor
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let col = NSStackView(views: [titleLabel, stack])
+        col.orientation = .vertical
+        col.alignment = .leading
+        col.spacing = 2
+        col.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(col)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: box.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: box.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: box.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: box.bottomAnchor),
+            col.leadingAnchor.constraint(equalTo: box.leadingAnchor),
+            col.trailingAnchor.constraint(equalTo: box.trailingAnchor),
+            col.topAnchor.constraint(equalTo: box.topAnchor),
+            col.bottomAnchor.constraint(equalTo: box.bottomAnchor),
             box.widthAnchor.constraint(greaterThanOrEqualToConstant: minWidth),
+            titleLabel.heightAnchor.constraint(equalToConstant: 14),
         ])
         return box
     }
@@ -527,10 +539,11 @@ final class CandidateWindow: NSPanel {
 
         let visibleRows = max(visibleLeft, visibleRight, 1)
         let headerH: CGFloat = 18
+        let colTitleH: CGFloat = 16  // 選字 / 選詞 column titles
         let hintH: CGFloat = 14
         let pad: CGFloat = 20
         let rowsH = CGFloat(visibleRows) * 28 + CGFloat(max(visibleRows - 1, 0)) * 1
-        let height = pad + headerH + 6 + rowsH + 4 + hintH
+        let height = pad + headerH + 6 + colTitleH + rowsH + 4 + hintH
         // Single-column: size to the visible column (字 narrow / 詞 wider).
         let width: CGFloat
         if showLeft && showRight {

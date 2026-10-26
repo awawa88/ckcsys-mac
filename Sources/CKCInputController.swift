@@ -735,8 +735,8 @@ class CKCInputController: IMKInputController {
         guard let client = (client as? IMKTextInput) ?? (currentClient as? IMKTextInput) else { return }
         var display = buffer
         switch lookKind {
-        case .phrases: display += " [詞]"
-        case .characters: display += " [字]"
+        case .phrases: display += " [選詞]"
+        case .characters: display += " [選字]"
         case .all: break
         }
         let attr = NSAttributedString(string: display)
