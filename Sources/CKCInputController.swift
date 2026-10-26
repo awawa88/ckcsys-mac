@@ -162,6 +162,7 @@ class CKCInputController: IMKInputController {
     }
 
     /// Top number-row Minus (kVK_ANSI_Minus / 0x1B) — NOT keypad.
+    /// Page-prev when composing / candidates; never the active special key.
     private func isNumberRowMinusEvent(keyCode: Int, characters: String, rawFlags: NSEvent.ModifierFlags) -> Bool {
         if keyCode == Int(kVK_ANSI_Minus) || keyCode == 0x1B { return true }
         // ASCII/Unicode minus without numericPad → treat as number-row
@@ -172,23 +173,34 @@ class CKCInputController: IMKInputController {
         return false
     }
 
+    /// Number-row Grave / backtick (kVK_ANSI_Grave / 0x32), left of 1.
+    /// Unshifted "`" and Shift+"`" ("~") both count as the 鍵盤 special key.
+    private func isNumberRowGraveEvent(keyCode: Int, characters: String, rawFlags: NSEvent.ModifierFlags) -> Bool {
+        if keyCode == Int(kVK_ANSI_Grave) || keyCode == 0x32 { return true }
+        if rawFlags.contains(.numericPad) { return false }
+        for ch in characters {
+            if ch == "`" || ch == "~" { return true }
+        }
+        return false
+    }
+
     /// Active special key mirrors DigitSource:
     /// - .numpad → Num Lock (KeypadClear)
-    /// - .numberRow → number-row Minus
-    /// Idle → 標點; composing → 萬能鍵 "?".
+    /// - .numberRow → Grave / backtick (` / ~)
+    /// Idle → dual marked "?" + 標點; composing → 萬能鍵 "?"; punctMode → next 標點 page.
     private func isActiveSpecialKeyEvent(keyCode: Int, characters: String, rawFlags: NSEvent.ModifierFlags) -> Bool {
         switch StatusConsole.shared.digitSource {
         case .numpad:
             return isNumLockEvent(keyCode: keyCode, characters: characters, rawFlags: rawFlags)
         case .numberRow:
-            return isNumberRowMinusEvent(keyCode: keyCode, characters: characters, rawFlags: rawFlags)
+            return isNumberRowGraveEvent(keyCode: keyCode, characters: characters, rawFlags: rawFlags)
         }
     }
 
     private func specialKeyLabel() -> String {
         switch StatusConsole.shared.digitSource {
         case .numpad: return "NumLock"
-        case .numberRow: return "Minus"
+        case .numberRow: return "Grave"
         }
     }
 
@@ -225,7 +237,7 @@ class CKCInputController: IMKInputController {
         return !flags.intersection([.command, .control, .option, .shift]).isEmpty
     }
 
-    /// 萬能鍵 keys only: "?" / `/~ — never 標點 openers.
+    /// Optional 萬能鍵 keys: "?" always; `/~ when NOT the active 鍵盤 special (see call site).
     /// Shift is REQUIRED for "?" / "~" on US keyboards — never treat Shift as blocking.
     /// Only Cmd/Ctrl/Opt block. Prefer keyCode fallbacks (Slash=0x2C, Grave=0x32).
     private func isWildcardKeyEvent(keyCode: Int, typed: String, charsIgnoring: String, flags: NSEvent.ModifierFlags) -> Bool {
@@ -345,7 +357,11 @@ class CKCInputController: IMKInputController {
         // Dismisses punct if visible; "?" stays in marked buffer; digits may follow.
         // Use rawFlags for Shift — never let Shift block 萬能鍵 (Shift+/ = "?")
         let wildFlags = flags.union(rawFlags.intersection([.shift]))
-        if isWildcardKeyEvent(keyCode: keyCode, typed: typedChars, charsIgnoring: chars, flags: wildFlags) {
+        // In 鍵盤 mode Grave/`/~ is the active special key — do not steal it as bare wildcard.
+        let graveIsSpecial = StatusConsole.shared.digitSource == .numberRow
+            && isNumberRowGraveEvent(keyCode: keyCode, characters: chars, rawFlags: rawFlags)
+        if !graveIsSpecial
+            && isWildcardKeyEvent(keyCode: keyCode, typed: typedChars, charsIgnoring: chars, flags: wildFlags) {
             ckcLog(String(format: "wildcard HIT code=%d typed=%@ chars=%@ shift=%d punct=%d buf=%@",
                           keyCode, typedChars as NSString, chars as NSString,
                           wildFlags.contains(.shift) ? 1 : 0, punctMode ? 1 : 0, buffer as NSString))
@@ -404,8 +420,9 @@ class CKCInputController: IMKInputController {
         }
 
         // Active special key (DigitSource gate):
-        // 小鍵盤 → Num Lock; 鍵盤 → number-row Minus.
+        // 小鍵盤 → Num Lock; 鍵盤 → Grave / backtick (` / ~).
         // Idle (first key) → marked "?" + 標點; composing → 萬能鍵 "?"; punctMode → next page.
+        // Number-row Minus is NOT special — page-prev when candidates visible.
         if isActiveSpecialKeyEvent(keyCode: keyCode, characters: chars, rawFlags: rawFlags) {
             ckcLog(String(format: "specialKey src=%@ code=%d composing=%d punctMode=%d",
                           StatusConsole.shared.digitSource.rawValue as NSString,
@@ -523,10 +540,8 @@ class CKCInputController: IMKInputController {
                 return true
             }
 
-            // Page: keypad Minus/=/PageUp/Down/,.[] — number-row Minus pages only in numpad mode
-            let numberRowMinusPages = StatusConsole.shared.digitSource == .numpad
-                && isNumberRowMinusEvent(keyCode: keyCode, characters: chars, rawFlags: rawFlags)
-            if numberRowMinusPages
+            // Page-prev: keypad Minus, number-row Minus (both modes), PageUp
+            if isNumberRowMinusEvent(keyCode: keyCode, characters: chars, rawFlags: rawFlags)
                 || keyCode == Int(kVK_PageUp)
                 || isKeypadMinusEvent(keyCode: keyCode, characters: chars, rawFlags: rawFlags) {
                 selectedIndex = CandidateWindow.shared.prevPage()

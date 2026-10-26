@@ -1,6 +1,6 @@
 # Ckcsys macOS IMK — STATUS
 
-Time: 2026-10-27 01:50 Asia/Hong_Kong (UTC+8)
+Time: 2026-10-27 02:12 Asia/Hong_Kong (UTC+8)
 Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
 
 ## Fixed this build (two bugs)
@@ -26,10 +26,10 @@ Fixes:
 - Removed park-above-console positioning; caret/client geometry first, then mouse, never StatusConsole as primary.
 
 ## Product rules (unchanged)
-- Idle 標點: Num Lock + number-row Minus only (keypad Minus = page-prev when composing).
+- Idle dual special: Num Lock (小鍵盤) or Grave/`/`~ (鍵盤); Minus = page-prev when composing.
 - After T/* or full 6-digit: 1–9 phrases; after Y//: 1–9 chars.
 - DigitSource XOR; StatusConsole 縱·繁·小鍵盤/鍵盤.
-- Keypad Decimal = 刪碼; wildcard 萬能鍵 on `?` and `` `/~ `` (Num Lock = 標點 only).
+- Keypad Decimal = 刪碼; optional wildcard `?` always; `` `/~ `` optional wildcard only in 小鍵盤 (in 鍵盤 they are the special key).
 
 ## Install
 `~/Library/Input Methods/Ckcsys.app` — enabled as `com.andrewlam.inputmethod.ckc`.
@@ -62,3 +62,9 @@ Idle / first keystroke of active special key (Num Lock if 小鍵盤, number-row 
 - Esc clears both.
 - Already composing (buffer non-empty) + special key → append `?` only, no 標點.
 - punctMode special key → next 標點 page (keeps marked `?` if dual).
+
+## Special key → Grave in 鍵盤 (2026-10-27 02:12 HKT)
+- **小鍵盤** special stays **Num Lock** (unchanged dual idle / composing `?` / punct page).
+- **鍵盤** special is now **Grave / backtick** (`` ` `` and `~`, kVK_ANSI_Grave 0x32) — same dual roles as Num Lock.
+- **Minus** restored to **向前翻頁** (number-row + keypad) when candidates visible; idle Minus is not special.
+- Log label: `Grave special → …` in numberRow mode.
