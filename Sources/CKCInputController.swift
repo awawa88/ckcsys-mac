@@ -751,10 +751,10 @@ class CKCInputController: IMKInputController {
     private func updateMarked(client: Any?) {
         guard let client = (client as? IMKTextInput) ?? (currentClient as? IMKTextInput) else { return }
         var display = buffer
-        let src = StatusConsole.shared.digitSource
+        // Marked chrome stays Chinese-only; ÷/× or Y/T live on candidate column headers.
         switch lookKind {
-        case .phrases: display += " [\(src.phraseColumnHeader)]"
-        case .characters: display += " [\(src.charColumnHeader)]"
+        case .phrases: display += " [選詞]"
+        case .characters: display += " [選字]"
         case .all: break
         }
         let attr = NSAttributedString(string: display)
