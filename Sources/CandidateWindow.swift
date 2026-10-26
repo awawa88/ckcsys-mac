@@ -33,7 +33,6 @@ final class CandidateWindow: NSPanel {
 
     private var effectView: NSVisualEffectView!
     private var contentStack: NSStackView!
-    private var codeLabel: NSTextField!
     private var pageLabel: NSTextField!
     private var hintLabel: NSTextField!
     private var columnsStack: NSStackView!
@@ -147,23 +146,19 @@ final class CandidateWindow: NSPanel {
         effectView.autoresizingMask = [.width, .height]
         container.addSubview(effectView)
 
-        codeLabel = NSTextField(labelWithString: "")
-        codeLabel.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
-        codeLabel.textColor = .secondaryLabelColor
-        codeLabel.alignment = .left
-        codeLabel.lineBreakMode = .byTruncatingTail
-
+        // Composition digits stay in the client marked text only — not duplicated here.
         pageLabel = NSTextField(labelWithString: "")
         pageLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
         pageLabel.textColor = .tertiaryLabelColor
         pageLabel.alignment = .right
 
-        let header = NSStackView(views: [codeLabel, pageLabel])
+        let headerSpacer = NSView()
+        headerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let header = NSStackView(views: [headerSpacer, pageLabel])
         header.orientation = .horizontal
         header.distribution = .fill
         header.alignment = .centerY
         header.spacing = 8
-        codeLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         pageLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         // Left column: chars numbered 1–9
@@ -491,7 +486,6 @@ final class CandidateWindow: NSPanel {
 
     private func reloadRows() {
         applyAppearance()
-        codeLabel.stringValue = composition.isEmpty ? " " : composition
         if pageCount > 1 {
             pageLabel.stringValue = "\(pageIndex + 1) / \(pageCount)"
         } else {
