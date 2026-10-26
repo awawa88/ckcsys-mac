@@ -53,3 +53,12 @@ DigitSource-gated mirror:
 - **小鍵盤** → Num Lock: idle=標點, composing=`?`
 - **鍵盤** → number-row Minus: idle=標點, composing=`?`
 Log: `specialKey src=…`, `NumLock/Minus special → punctMode ON (idle)`, `NumLock/Minus → wildcard marked`.
+
+## Special key dual idle (2026-10-27 02:10 HKT)
+Idle / first keystroke of active special key (Num Lock if 小鍵盤, number-row Minus if 鍵盤):
+- Marked `?` in the text field **and** 標點 CandidateWindow together.
+- Digits (active source) dismiss 標點, keep `?`, append digit → e.g. `?3` wildcard compose.
+- Space/Return commits highlighted punct and clears `?`.
+- Esc clears both.
+- Already composing (buffer non-empty) + special key → append `?` only, no 標點.
+- punctMode special key → next 標點 page (keeps marked `?` if dual).
