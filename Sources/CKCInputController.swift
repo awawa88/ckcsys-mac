@@ -50,6 +50,18 @@ class CKCInputController: IMKInputController {
             DictionaryStore.shared.load()
         }
         StatusConsole.shared.show(near: sender as AnyObject?)
+        // Keep candidate headers / marked chrome in sync when 小鍵盤↔鍵盤 toggles.
+        StatusConsole.shared.onDigitSourceChanged = { [weak self] source in
+            guard let self else { return }
+            CandidateWindow.shared.applyDigitModeLabels(digitSource: source)
+            if self.punctMode {
+                self.showPunctCandidates(client: self.currentClient)
+            } else if !self.buffer.isEmpty {
+                self.updateUI(client: self.currentClient)
+            }
+            self.ckcLog("digitSource changed → \(source.rawValue) headers=\(source.charColumnHeader)/\(source.phraseColumnHeader)")
+        }
+        CandidateWindow.shared.applyDigitModeLabels(digitSource: StatusConsole.shared.digitSource)
         ckcLog("activateServer dict=\(DictionaryStore.shared.sourceDescription) digitSource=\(StatusConsole.shared.digitSource.rawValue) capsOn=\(lastCapsLockOn == true ? 1 : 0)")
     }
 
@@ -739,9 +751,10 @@ class CKCInputController: IMKInputController {
     private func updateMarked(client: Any?) {
         guard let client = (client as? IMKTextInput) ?? (currentClient as? IMKTextInput) else { return }
         var display = buffer
+        let src = StatusConsole.shared.digitSource
         switch lookKind {
-        case .phrases: display += " [選詞]"
-        case .characters: display += " [選字]"
+        case .phrases: display += " [\(src.phraseColumnHeader)]"
+        case .characters: display += " [\(src.charColumnHeader)]"
         case .all: break
         }
         let attr = NSAttributedString(string: display)
@@ -776,6 +789,7 @@ class CKCInputController: IMKInputController {
             phrases: phraseCandidates,
             mode: mode,
             focus: focus,
+            digitSource: StatusConsole.shared.digitSource,
             near: (client as AnyObject?) ?? currentClient
         )
         selectedIndex = CandidateWindow.shared.globalSelectedIndex
@@ -864,6 +878,7 @@ class CKCInputController: IMKInputController {
             phrases: [],
             mode: .characters,
             focus: .characters,
+            digitSource: StatusConsole.shared.digitSource,
             near: clientObj
         )
         ckcLog(String(format: "showPunct page=%d count=%d frame=%@",

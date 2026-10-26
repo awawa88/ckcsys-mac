@@ -40,8 +40,12 @@ final class CandidateWindow: NSPanel {
     private var rightStack: NSStackView!
     private var leftColumnBox: NSView!
     private var rightColumnBox: NSView!
+    private var leftTitleLabel: NSTextField!
+    private var rightTitleLabel: NSTextField!
     private var charRowViews: [CandidateRowView] = []
     private var phraseRowViews: [CandidateRowView] = []
+    /// Active digit mode — drives ÷/× vs Y/T column headers and footer hint.
+    private var digitSource: DigitSource = .numpad
 
     private let panelWidthBoth: CGFloat = 340
     private let panelWidthSingle: CGFloat = 200
@@ -175,7 +179,7 @@ final class CandidateWindow: NSPanel {
             row.widthAnchor.constraint(equalTo: leftStack.widthAnchor).isActive = true
             row.heightAnchor.constraint(equalToConstant: 28).isActive = true
         }
-        leftColumnBox = wrapColumn(leftStack, title: "選字", minWidth: charColWidth)
+        leftColumnBox = wrapColumn(leftStack, title: "選字÷", minWidth: charColWidth, titleOut: &leftTitleLabel)
 
         // Right column: phrases numbered 1–9 (pick after T/*)
         rightStack = NSStackView()
@@ -191,7 +195,7 @@ final class CandidateWindow: NSPanel {
             row.widthAnchor.constraint(equalTo: rightStack.widthAnchor).isActive = true
             row.heightAnchor.constraint(equalToConstant: 28).isActive = true
         }
-        rightColumnBox = wrapColumn(rightStack, title: "選詞", minWidth: phraseColWidth)
+        rightColumnBox = wrapColumn(rightStack, title: "選詞×", minWidth: phraseColWidth, titleOut: &rightTitleLabel)
 
         // Vertical separator
         let separator = NSBox()
@@ -207,7 +211,7 @@ final class CandidateWindow: NSPanel {
         leftColumnBox.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         rightColumnBox.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        hintLabel = NSTextField(labelWithString: "↑↓選  ←→欄  T/*後1–9選詞  Y//後1–9選字  −/=翻頁  Space確認")
+        hintLabel = NSTextField(labelWithString: "↑↓選  ←→欄  ×後1–9選詞  ÷後1–9選字  −/=翻頁  Space確認")
         hintLabel.font = NSFont.systemFont(ofSize: 9.5, weight: .regular)
         hintLabel.textColor = .tertiaryLabelColor
         hintLabel.alignment = .left
@@ -238,15 +242,18 @@ final class CandidateWindow: NSPanel {
         contentView?.layer?.backgroundColor = NSColor.clear.cgColor
     }
 
-    private func wrapColumn(_ stack: NSStackView, title: String, minWidth: CGFloat) -> NSView {
+    private func wrapColumn(_ stack: NSStackView, title: String, minWidth: CGFloat, titleOut: inout NSTextField!) -> NSView {
         let box = NSView()
         box.translatesAutoresizingMaskIntoConstraints = false
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
+        // Semibold so 選字÷ / 選詞× (or Y/T) read as headers.
+        titleLabel.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
         titleLabel.textColor = .secondaryLabelColor
+        titleLabel.alignment = .left
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleOut = titleLabel
 
         let col = NSStackView(views: [titleLabel, stack])
         col.orientation = .vertical
@@ -268,18 +275,21 @@ final class CandidateWindow: NSPanel {
     // MARK: - Public API
 
     /// Show two-column candidates. `mode` controls which columns are visible.
+    /// `digitSource` sets left/right headers to 選字÷/選詞× (小鍵盤) or 選字Y/選詞T (鍵盤).
     func show(
         composition: String,
         chars: [String],
         phrases: [String],
         mode: CandidateDisplayMode = .both,
         focus: CandidateColumn? = nil,
+        digitSource: DigitSource = StatusConsole.shared.digitSource,
         near client: AnyObject?
     ) {
         self.composition = composition
         self.charCandidates = chars
         self.phraseCandidates = phrases
         self.displayMode = mode
+        self.digitSource = digitSource
 
         let hasChars = !chars.isEmpty
         let hasPhrases = !phrases.isEmpty
@@ -331,6 +341,7 @@ final class CandidateWindow: NSPanel {
         let pageLen = min(pageSize, max(0, list.count - pageIndex * pageSize))
         if selectedIndex >= pageLen { selectedIndex = max(0, pageLen - 1) }
 
+        applyDigitModeLabels()
         reloadRows()
         position(near: client)
         // Always raise — StatusConsole may have been orderFront'd; keep candidates on top after T/Y/*/ /.
@@ -482,6 +493,20 @@ final class CandidateWindow: NSPanel {
         pageIndex * pageSize + selectedIndex
     }
 
+    // MARK: - Digit-mode column headers / footer
+
+    /// Update ÷/× or Y/T headers and the short footer hint for the active DigitSource.
+    func applyDigitModeLabels(digitSource: DigitSource? = nil) {
+        if let digitSource {
+            self.digitSource = digitSource
+        }
+        leftTitleLabel?.stringValue = self.digitSource.charColumnHeader
+        rightTitleLabel?.stringValue = self.digitSource.phraseColumnHeader
+        let charKey = self.digitSource.charEndKey
+        let phraseKey = self.digitSource.phraseEndKey
+        hintLabel?.stringValue = "↑↓選  ←→欄  \(phraseKey)後1–9選詞  \(charKey)後1–9選字  −/=翻頁  Space確認"
+    }
+
     // MARK: - Layout / paint
 
     private func reloadRows() {
@@ -540,7 +565,7 @@ final class CandidateWindow: NSPanel {
 
         let visibleRows = max(visibleLeft, visibleRight, 1)
         let headerH: CGFloat = 18
-        let colTitleH: CGFloat = 16  // 選字 / 選詞 column titles
+        let colTitleH: CGFloat = 16  // ÷/× or Y/T column titles
         let hintH: CGFloat = 14
         let pad: CGFloat = 20
         let rowsH = CGFloat(visibleRows) * 28 + CGFloat(max(visibleRows - 1, 0)) * 1

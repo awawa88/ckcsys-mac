@@ -12,6 +12,28 @@ enum DigitSource: String {
         }
     }
 
+    /// Bare 字 end-key glyph: ÷ (numpad /) or Y (number-row).
+    var charEndKey: String {
+        switch self {
+        case .numpad: return "÷"   // U+00F7
+        case .numberRow: return "Y"
+        }
+    }
+
+    /// Bare 詞 end-key glyph: × (numpad *) or T (number-row).
+    var phraseEndKey: String {
+        switch self {
+        case .numpad: return "×"   // U+00D7
+        case .numberRow: return "T"
+        }
+    }
+
+    /// Left column header: 選字÷ or 選字Y (Chinese + end-key, no space).
+    var charColumnHeader: String { "選字\(charEndKey)" }
+
+    /// Right column header: 選詞× or 選詞T.
+    var phraseColumnHeader: String { "選詞\(phraseEndKey)" }
+
     mutating func toggle() {
         self = (self == .numpad) ? .numberRow : .numpad
     }
