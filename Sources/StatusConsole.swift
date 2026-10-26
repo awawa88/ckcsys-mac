@@ -56,7 +56,9 @@ final class StatusConsole: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         isOpaque = false
         backgroundColor = .clear
-        hasShadow = true
+        // Same transparent NSPanel + rounded mask issue as CandidateWindow:
+        // rectangular AppKit shadow leaks black corners; use layer shadow instead.
+        hasShadow = false
         hidesOnDeactivate = false
         becomesKeyOnlyIfNeeded = true
         isReleasedWhenClosed = false
@@ -78,12 +80,21 @@ final class StatusConsole: NSPanel {
         chromeView = ChromeView(frame: NSRect(x: 0, y: 0, width: stripWidth, height: stripHeight))
         chromeView.panel = self
         chromeView.autoresizingMask = [.width, .height]
+        chromeView.wantsLayer = true
+        chromeView.layer?.backgroundColor = NSColor.clear.cgColor
+        chromeView.layer?.cornerRadius = cornerRadius
+        chromeView.layer?.masksToBounds = false
+        chromeView.layer?.shadowColor = NSColor.black.cgColor
+        chromeView.layer?.shadowOpacity = 0.30
+        chromeView.layer?.shadowRadius = 12
+        chromeView.layer?.shadowOffset = CGSize(width: 0, height: -2)
 
         effectView = NSVisualEffectView(frame: chromeView.bounds)
         effectView.material = .hudWindow
         effectView.blendingMode = .behindWindow
         effectView.state = .followsWindowActiveState
         effectView.wantsLayer = true
+        effectView.clipsToBounds = true
         effectView.layer?.cornerRadius = cornerRadius
         effectView.layer?.masksToBounds = true
         effectView.layer?.borderWidth = 0.5
@@ -121,6 +132,8 @@ final class StatusConsole: NSPanel {
 
         chromeView.addSubview(effectView)
         contentView = chromeView
+        contentView?.wantsLayer = true
+        contentView?.layer?.backgroundColor = NSColor.clear.cgColor
         applyAppearance()
         refreshLabels()
     }

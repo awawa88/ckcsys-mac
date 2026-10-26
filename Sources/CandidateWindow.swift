@@ -108,7 +108,10 @@ final class CandidateWindow: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         isOpaque = false
         backgroundColor = .clear
-        hasShadow = true
+        // AppKit window shadow is rectangular; with a transparent NSPanel it leaks
+        // as solid black right-angle corners outside the rounded vibrancy mask.
+        // Depth comes from the container layer shadow instead.
+        hasShadow = false
         hidesOnDeactivate = false
         becomesKeyOnlyIfNeeded = true
         isReleasedWhenClosed = false
@@ -125,6 +128,7 @@ final class CandidateWindow: NSPanel {
         // IME is LSUIElement / never key — followsWindowActiveState washes out the HUD.
         effectView.state = .active
         effectView.wantsLayer = true
+        effectView.clipsToBounds = true
         effectView.layer?.cornerRadius = cornerRadius
         effectView.layer?.masksToBounds = true
         effectView.layer?.borderWidth = 0.5
@@ -132,12 +136,13 @@ final class CandidateWindow: NSPanel {
 
         let container = NSView(frame: effectView.bounds)
         container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.clear.cgColor
         container.layer?.cornerRadius = cornerRadius
         container.layer?.masksToBounds = false
         container.layer?.shadowColor = NSColor.black.cgColor
-        container.layer?.shadowOpacity = 0.28
-        container.layer?.shadowRadius = 18
-        container.layer?.shadowOffset = CGSize(width: 0, height: -2)
+        container.layer?.shadowOpacity = 0.35
+        container.layer?.shadowRadius = 20
+        container.layer?.shadowOffset = CGSize(width: 0, height: -3)
         container.autoresizingMask = [.width, .height]
         effectView.autoresizingMask = [.width, .height]
         container.addSubview(effectView)
@@ -234,6 +239,8 @@ final class CandidateWindow: NSPanel {
         ])
 
         contentView = container
+        contentView?.wantsLayer = true
+        contentView?.layer?.backgroundColor = NSColor.clear.cgColor
     }
 
     private func wrapColumn(_ stack: NSStackView, title: String, minWidth: CGFloat) -> NSView {
