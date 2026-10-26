@@ -18,6 +18,15 @@ Public home: https://github.com/awawa88/ckcsys-mac
 - [ ] Add **Ckcsys** once in System Settings → Keyboard → Input Sources (human one-time)
 - [ ] Settings stub (定)
 
+## Download
+
+Prebuilt installer (GitHub Releases):
+
+- **Latest release:** https://github.com/awawa88/ckcsys-mac/releases/latest
+- **v0.2.0 pkg:** https://github.com/awawa88/ckcsys-mac/releases/download/v0.2.0/Ckcsys-Installer-0.2.0.pkg
+
+Double-click the `.pkg` to install into `~/Library/Input Methods/Ckcsys.app`, then add **Ckcsys** under System Settings → Keyboard → Input Sources. The package is ad-hoc signed (not notarized); if Gatekeeper blocks it, right-click → Open.
+
 ## Build / install
 
 ```bash
