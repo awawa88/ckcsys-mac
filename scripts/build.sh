@@ -35,7 +35,20 @@ swiftc -O \
 echo "==> Copying resources"
 cp "$ROOT/Resources/Info.plist" "$CONTENTS/Info.plist"
 cp "$ROOT/Resources/ckc_seed.txt" "$RES/ckc_seed.txt"
-cp -R "$ROOT/Resources/tables/." "$RES/tables/" 2>/dev/null || true
+if [[ ! -d "$ROOT/Resources/tables" ]]; then
+  echo "ERROR: Resources/tables missing — place cht_zimb_VISTA.tsv / cht_cimb_VISTA.tsv" >&2
+  exit 1
+fi
+shopt -s nullglob
+TABLE_FILES=("$ROOT/Resources/tables"/*.tsv)
+shopt -u nullglob
+if [[ ${#TABLE_FILES[@]} -eq 0 ]]; then
+  echo "ERROR: Resources/tables has no .tsv lexicon files" >&2
+  exit 1
+fi
+cp -R "$ROOT/Resources/tables/." "$RES/tables/"
+echo "==> Bundled tables: $(ls -1 "$RES/tables"/*.tsv | wc -l | tr -d ' ') tsv file(s)"
+ls -la "$RES/tables"/*.tsv
 
 # Localized display name (Ckcsys) — critical so Input Sources never shows bundle id
 for loc in Base.lproj en.lproj zh-Hant.lproj zh-Hans.lproj; do

@@ -44,6 +44,11 @@ class CKCInputController: IMKInputController {
         currentClient = sender as AnyObject
         // Sync Caps Lock latch so the first flagsChanged does not spuriously toggle DigitSource.
         lastCapsLockOn = NSEvent.modifierFlags.contains(.capsLock)
+        // Self-heal after install races: IM may have loaded while Resources/tables was mid-replace.
+        if DictionaryStore.shared.needsLexiconReload {
+            ckcLog("activateServer lexicon reload (was \(DictionaryStore.shared.sourceDescription))")
+            DictionaryStore.shared.load()
+        }
         StatusConsole.shared.show(near: sender as AnyObject?)
         ckcLog("activateServer dict=\(DictionaryStore.shared.sourceDescription) digitSource=\(StatusConsole.shared.digitSource.rawValue) capsOn=\(lastCapsLockOn == true ? 1 : 0)")
     }

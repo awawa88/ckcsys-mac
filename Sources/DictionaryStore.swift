@@ -33,6 +33,42 @@ final class DictionaryStore {
             .appendingPathComponent("user_phrases.tsv")
     }
 
+    /// True when only the tiny built-in proof set is active (tables failed to load).
+    var needsLexiconReload: Bool {
+        sourceDescription.contains("hardcoded minimal") || systemEntryCount < 1000
+    }
+
+    // MARK: - Bundle / paths
+
+    /// Resolve the IM app bundle even if Bundle.main is briefly wrong during install races.
+    private func lexiconBundle() -> Bundle {
+        let main = Bundle.main
+        if let id = main.bundleIdentifier, id.contains("inputmethod.ckc") {
+            return main
+        }
+        if main.bundleURL.path.hasSuffix("Ckcsys.app") || main.bundleURL.path.contains("CKC縱橫.app") {
+            return main
+        }
+        let candidates = [
+            NSHomeDirectory() + "/Library/Input Methods/Ckcsys.app",
+            NSHomeDirectory() + "/Library/Input Methods/CKC縱橫.app"
+        ]
+        for path in candidates {
+            if let b = Bundle(path: path) { return b }
+        }
+        return main
+    }
+
+    private func appendLog(_ line: String) {
+        let path = "/tmp/ckc-ime.log"
+        guard let data = (line + "\n").data(using: .utf8) else { return }
+        if FileManager.default.fileExists(atPath: path), let h = FileHandle(forWritingAtPath: path) {
+            h.seekToEndOfFile(); h.write(data); h.closeFile()
+        } else {
+            FileManager.default.createFile(atPath: path, contents: data)
+        }
+    }
+
     // MARK: - Load
 
     func load() {
@@ -42,13 +78,35 @@ final class DictionaryStore {
         charPrimaryCode.removeAll()
         systemEntryCount = 0
         userEntryCount = 0
+        sourceDescription = "unloaded"
 
-        let bundle = Bundle.main
+        let bundle = lexiconBundle()
         var loaded = 0
+        let resPath = bundle.resourceURL?.path ?? "nil"
+        appendLog("Dictionary load begin bundle=\(bundle.bundlePath) resources=\(resPath)")
 
-        if let tablesURL = bundle.resourceURL?.appendingPathComponent("tables", isDirectory: true),
-           FileManager.default.fileExists(atPath: tablesURL.path) {
-            loaded = loadWindowsTables(from: tablesURL)
+        if let tablesURL = bundle.resourceURL?.appendingPathComponent("tables", isDirectory: true) {
+            if FileManager.default.fileExists(atPath: tablesURL.path) {
+                loaded = loadWindowsTables(from: tablesURL)
+                if loaded == 0 {
+                    appendLog("Dictionary tables dir present but 0 rows from \(tablesURL.path)")
+                }
+            } else {
+                appendLog("Dictionary tables missing at \(tablesURL.path)")
+            }
+        } else {
+            appendLog("Dictionary resourceURL nil for bundle \(bundle.bundlePath)")
+        }
+
+        // Also try the installed IM path if Bundle.main pointed at a half-deleted tree.
+        if loaded == 0 {
+            let fallback = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Input Methods/Ckcsys.app/Contents/Resources/tables", isDirectory: true)
+            if FileManager.default.fileExists(atPath: fallback.path) {
+                loaded = loadWindowsTables(from: fallback)
+                if loaded > 0 {
+                    appendLog("Dictionary loaded via installed-path fallback \(fallback.path)")
+                }
+            }
         }
 
         if loaded == 0, let seedURL = bundle.url(forResource: "ckc_seed", withExtension: "txt") {
@@ -71,6 +129,7 @@ final class DictionaryStore {
             charPrimaryCode["小"] = "9"
             loaded = 7
             sourceDescription = "hardcoded minimal proofs"
+            appendLog("Dictionary FALLBACK hardcoded — tables/seed unavailable (install race or missing Resources/tables)")
         }
 
         systemEntryCount = loaded
@@ -84,14 +143,7 @@ final class DictionaryStore {
         loadPunctuationTable()
         rebuildPrefixIndex()
         NSLog("[CKC] Dictionary loaded: %@ punct=%d", sourceDescription, punctuationList.count)
-        if let data = String(format: "Dictionary loaded punct=%d desc=%@\n", punctuationList.count, sourceDescription as NSString).data(using: .utf8) {
-            let path = "/tmp/ckc-ime.log"
-            if FileManager.default.fileExists(atPath: path), let h = FileHandle(forWritingAtPath: path) {
-                h.seekToEndOfFile(); h.write(data); h.closeFile()
-            } else {
-                FileManager.default.createFile(atPath: path, contents: data)
-            }
-        }
+        appendLog(String(format: "Dictionary loaded punct=%d desc=%@", punctuationList.count, sourceDescription))
     }
 
     /// Build prefix → sorted exact keys once. Lookup avoids O(n) key scan per keystroke.
@@ -499,12 +551,16 @@ final class DictionaryStore {
     /// Load Resources/tables/cht_punctuation.tsv (xh\thz), sorted by xh.
     func loadPunctuationTable() {
         punctuationList = []
-        let bundle = Bundle.main
+        let bundle = lexiconBundle()
         var url = bundle.resourceURL?
             .appendingPathComponent("tables", isDirectory: true)
             .appendingPathComponent("cht_punctuation.tsv")
         if url == nil || !FileManager.default.fileExists(atPath: url!.path) {
             url = bundle.url(forResource: "cht_punctuation", withExtension: "tsv", subdirectory: "tables")
+        }
+        if url == nil || !FileManager.default.fileExists(atPath: url!.path) {
+            let fb = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Input Methods/Ckcsys.app/Contents/Resources/tables/cht_punctuation.tsv")
+            if FileManager.default.fileExists(atPath: fb.path) { url = fb }
         }
         guard let url = url, let text = try? String(contentsOf: url, encoding: .utf8) else {
             punctuationList = ["，", "。", "、", "：", "；", "？", "「", "」", "！",
