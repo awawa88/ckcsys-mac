@@ -108,3 +108,4 @@ build/     Ckcsys.app (gitignored)
 - Display name: **Ckcsys**
 - Bundle ID: `com.andrewlam.inputmethod.ckc` (internal — UI shows Ckcsys)
 - App icon: `AppIcon` · menu bar: `menuIcon`
+
