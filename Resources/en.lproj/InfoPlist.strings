@@ -1,0 +1,4 @@
+CFBundleName = "Ckcsys";
+CFBundleDisplayName = "Ckcsys";
+"com.andrewlam.inputmethod.ckc" = "Ckcsys";
+"com.andrewlam.inputmethod.ckc.zhuyong" = "Ckcsys";

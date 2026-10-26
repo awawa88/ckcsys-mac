@@ -1,0 +1,34 @@
+# CKC 縱橫輸入法 seed table (UTF-8)
+# Format: code<TAB>candidate
+# Source: CKCIS USB User Guide (public) + required product seeds.
+# Instant codes (1 digit) — character then phrase per CKC docs
+0	的
+0	香港
+1	要
+1	可以
+2	以
+2	經濟
+3	這
+3	沒有
+4	有
+4	教育
+5	中
+5	中國
+6	是
+6	國家
+7	與
+7	學習
+8	人
+8	人民
+9	小
+9	常常
+# Single-character example (4 corners Z-order)
+0307	我
+# Phrase examples from CKC docs
+289449	縱橫
+177200	電腦化
+604790	易如反掌
+063060	香港特別行政區
+063437	香港教育學院
+# A few more common singles from public CKC examples / mnemonic digits
+# (instant singles already cover 的要以這有中是與人小)

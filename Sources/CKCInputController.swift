@@ -1,0 +1,897 @@
+import Cocoa
+import InputMethodKit
+import Carbon.HIToolbox
+
+/// CKC / Ckcsys IMK controller.
+/// Digit entry builds the composition code (max 6). Two-column CandidateWindow: chars | phrases.
+/// T/* = 詞 then 1–9 pick; Y// = 字 then 1–9 pick; −/= page; Space commit.
+/// DigitSource (.numpad default): only that source's digits enter codes.
+@objc(CKCInputController)
+class CKCInputController: IMKInputController {
+    private var buffer: String = ""
+    private var charCandidates: [String] = []
+    private var phraseCandidates: [String] = []
+    private var lookKind: DictionaryStore.CandidateKind = .all  // .all = both columns
+    private var selectedIndex: Int = 0
+    private weak var currentClient: AnyObject?
+
+    /// Windows CKC: idle keypad "-" (標點符號鍵) opens 標點 picker; digits then commit.
+    private var punctMode: Bool = false
+    private var punctPageIndex: Int = 0
+    /// Caps Lock often delivers two flagsChanged (press + release) with the same lock state.
+    /// Track edges so DigitSource toggles once per real Caps Lock state change.
+    private var lastCapsLockOn: Bool?
+    /// Debounce Num Lock keyDown+flagsChanged double delivery → one "?".
+    private var lastWildcardAppendAt: TimeInterval = 0
+
+    /// Pages of 9 from cht_punctuation.tsv (Windows xh order).
+    private var punctPages: [[String]] {
+        let list = DictionaryStore.shared.punctuationList
+        let src = list.isEmpty
+            ? ["，", "。", "、", "：", "；", "？", "「", "」", "！"]
+            : list
+        var pages: [[String]] = []
+        var i = 0
+        while i < src.count {
+            pages.append(Array(src[i..<min(i + 9, src.count)]))
+            i += 9
+        }
+        return pages
+    }
+
+    override func activateServer(_ sender: Any!) {
+        super.activateServer(sender)
+        currentClient = sender as AnyObject
+        // Sync Caps Lock latch so the first flagsChanged does not spuriously toggle DigitSource.
+        lastCapsLockOn = NSEvent.modifierFlags.contains(.capsLock)
+        StatusConsole.shared.show(near: sender as AnyObject?)
+        ckcLog("activateServer dict=\(DictionaryStore.shared.sourceDescription) digitSource=\(StatusConsole.shared.digitSource.rawValue) capsOn=\(lastCapsLockOn == true ? 1 : 0)")
+    }
+
+    override func deactivateServer(_ sender: Any!) {
+        exitPunctMode()
+        clearComposition(client: sender)
+        StatusConsole.shared.hide()
+        super.deactivateServer(sender)
+    }
+
+    override func recognizedEvents(_ sender: Any!) -> Int {
+        return Int(NSEvent.EventTypeMask.keyDown.rawValue | NSEvent.EventTypeMask.flagsChanged.rawValue)
+    }
+
+    override func menu() -> NSMenu! {
+        let m = NSMenu(title: "Ckcsys")
+        let add = NSMenuItem(
+            title: "新增詞語… (Add Phrase)",
+            action: #selector(addPhraseMenuAction(_:)),
+            keyEquivalent: "="
+        )
+        add.keyEquivalentModifierMask = [.control]
+        add.target = self
+        m.addItem(add)
+
+        let reveal = NSMenuItem(
+            title: "編輯使用者詞庫…",
+            action: #selector(revealUserPhrasesMenuAction(_:)),
+            keyEquivalent: ""
+        )
+        reveal.target = self
+        m.addItem(reveal)
+
+        m.addItem(NSMenuItem.separator())
+
+        let toggle = NSMenuItem(
+            title: "切換碼元來源（小鍵盤／鍵盤）",
+            action: #selector(toggleDigitSourceMenuAction(_:)),
+            keyEquivalent: ""
+        )
+        toggle.target = self
+        m.addItem(toggle)
+
+        let reload = NSMenuItem(
+            title: "重新載入詞庫",
+            action: #selector(reloadDictionaryMenuAction(_:)),
+            keyEquivalent: ""
+        )
+        reload.target = self
+        m.addItem(reload)
+        return m
+    }
+
+    @objc func addPhraseMenuAction(_ sender: Any?) {
+        AddPhrasePanel.shared.show(presetCode: buffer.isEmpty ? nil : buffer)
+    }
+
+    @objc func revealUserPhrasesMenuAction(_ sender: Any?) {
+        DictionaryStore.shared.revealUserPhrasesInFinder()
+    }
+
+    @objc func toggleDigitSourceMenuAction(_ sender: Any?) {
+        StatusConsole.shared.toggleDigitSource()
+    }
+
+    @objc func reloadDictionaryMenuAction(_ sender: Any?) {
+        DictionaryStore.shared.load()
+        if !buffer.isEmpty {
+            refreshCandidates()
+            updateUI(client: currentClient)
+        }
+        NSLog("[CKC] dictionary reloaded: %@", DictionaryStore.shared.sourceDescription)
+    }
+
+    /// Append one line to /tmp/ckc-ime.log (unified log often redacts NSLog as <private>).
+    private func ckcLog(_ message: String) {
+        let line = message + "\n"
+        let path = "/tmp/ckc-ime.log"
+        if let data = line.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: path),
+               let handle = FileHandle(forWritingAtPath: path) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                handle.closeFile()
+            } else {
+                FileManager.default.createFile(atPath: path, contents: data)
+            }
+        }
+        NSLog("%@", "[CKC] " + message)
+    }
+
+    /// True for keypad Minus: Carbon 0x4E, or numericPad + ASCII/Unicode minus variants.
+    private func isKeypadMinusEvent(keyCode: Int, characters: String, rawFlags: NSEvent.ModifierFlags) -> Bool {
+        if keyCode == Int(kVK_ANSI_KeypadMinus) || keyCode == 0x4E { return true }
+        guard rawFlags.contains(.numericPad) else { return false }
+        for ch in characters {
+            if ch == "-" || ch == "\u{2212}" || ch == "\u{FF0D}" || ch == "\u{FE63}" { return true }
+        }
+        return false
+    }
+
+    private func isKeypadPlusEvent(keyCode: Int, characters: String, rawFlags: NSEvent.ModifierFlags) -> Bool {
+        if keyCode == Int(kVK_ANSI_KeypadPlus) || keyCode == 0x45 { return true }
+        guard rawFlags.contains(.numericPad) else { return false }
+        return characters.contains("+") || characters.contains("\u{FF0B}")
+    }
+
+    /// Mac Num Lock is usually KeypadClear (0x47). Some boards only send flagsChanged.
+    private func isNumLockEvent(keyCode: Int, characters: String, rawFlags: NSEvent.ModifierFlags) -> Bool {
+        if keyCode == Int(kVK_ANSI_KeypadClear) || keyCode == 0x47 { return true }
+        // Rare: character "clear" / empty with numericPad on that keycode path already covered.
+        _ = characters
+        _ = rawFlags
+        return false
+    }
+
+    /// Top number-row Minus (kVK_ANSI_Minus / 0x1B) — NOT keypad.
+    private func isNumberRowMinusEvent(keyCode: Int, characters: String, rawFlags: NSEvent.ModifierFlags) -> Bool {
+        if keyCode == Int(kVK_ANSI_Minus) || keyCode == 0x1B { return true }
+        // ASCII/Unicode minus without numericPad → treat as number-row
+        if rawFlags.contains(.numericPad) { return false }
+        for ch in characters {
+            if ch == "-" || ch == "\u{2212}" || ch == "\u{FF0D}" { return true }
+        }
+        return false
+    }
+
+    /// Active special key mirrors DigitSource:
+    /// - .numpad → Num Lock (KeypadClear)
+    /// - .numberRow → number-row Minus
+    /// Idle → 標點; composing → 萬能鍵 "?".
+    private func isActiveSpecialKeyEvent(keyCode: Int, characters: String, rawFlags: NSEvent.ModifierFlags) -> Bool {
+        switch StatusConsole.shared.digitSource {
+        case .numpad:
+            return isNumLockEvent(keyCode: keyCode, characters: characters, rawFlags: rawFlags)
+        case .numberRow:
+            return isNumberRowMinusEvent(keyCode: keyCode, characters: characters, rawFlags: rawFlags)
+        }
+    }
+
+    private func specialKeyLabel() -> String {
+        switch StatusConsole.shared.digitSource {
+        case .numpad: return "NumLock"
+        case .numberRow: return "Minus"
+        }
+    }
+
+    /// Handle active special key: punctMode→page; composing→"?"; idle→標點.
+    @discardableResult
+    private func handleActiveSpecialKey(client: Any?) -> Bool {
+        let via = specialKeyLabel()
+        if punctMode {
+            let pages = punctPages
+            let pageCount = max(pages.count, 1)
+            punctPageIndex = (punctPageIndex + 1) % pageCount
+            showPunctCandidates(client: client)
+            ckcLog("\(via) special → punct page \(punctPageIndex + 1)/\(pageCount)")
+            return true
+        }
+        if !buffer.isEmpty {
+            return appendWildcardMarked(client: client, via: via)
+        }
+        enterPunctMode(client: client)
+        ckcLog("\(via) special → punctMode ON (idle)")
+        return true
+    }
+
+    /// Cmd/Ctrl/Opt/Shift block; leftover .numericPad/.function/.capsLock already stripped from `flags`.
+    private func hasBlockingModifiers(_ flags: NSEvent.ModifierFlags) -> Bool {
+        return !flags.intersection([.command, .control, .option, .shift]).isEmpty
+    }
+
+    /// 萬能鍵 keys only: "?" / `/~ — never 標點 openers.
+    /// Shift is REQUIRED for "?" / "~" on US keyboards — never treat Shift as blocking.
+    /// Only Cmd/Ctrl/Opt block. Prefer keyCode fallbacks (Slash=0x2C, Grave=0x32).
+    private func isWildcardKeyEvent(keyCode: Int, typed: String, charsIgnoring: String, flags: NSEvent.ModifierFlags) -> Bool {
+        if !flags.intersection([.command, .control, .option]).isEmpty {
+            return false
+        }
+        if typed == "?" || typed == "`" || typed == "~" { return true }
+        if charsIgnoring == "?" || charsIgnoring == "`" || charsIgnoring == "~" { return true }
+        let isSlash = (keyCode == Int(kVK_ANSI_Slash) || keyCode == 0x2C)
+        let isGrave = (keyCode == Int(kVK_ANSI_Grave) || keyCode == 0x32)
+        if isSlash && flags.contains(.shift) { return true }
+        if isGrave { return true }
+        return false
+    }
+
+    /// Append "?" into marked composition (same path as digits). Dismisses 標點 if open.
+    @discardableResult
+    private func appendWildcardMarked(client: Any?, via: String = "wildcard") -> Bool {
+        if punctMode {
+            exitPunctMode()
+            ckcLog("\(via) dismissed punct → compose")
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        if now - lastWildcardAppendAt < 0.08 {
+            ckcLog("\(via) → wildcard debounced buffer=\(buffer)")
+            return true
+        }
+        if buffer.count >= 6 {
+            ckcLog("\(via) → wildcard ignored at max buffer=\(buffer)")
+            return true
+        }
+        lastWildcardAppendAt = now
+        buffer.append("?")
+        selectedIndex = 0
+        lookKind = .all
+        refreshCandidates()
+        updateUI(client: client)
+        ckcLog("\(via) → wildcard marked '\(buffer)' chars=\(charCandidates.count) phrases=\(phraseCandidates.count)")
+        return true
+    }
+
+    override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
+        guard let event = event else { return false }
+        currentClient = sender as AnyObject
+
+        // Caps Lock toggles digit source; some keyboards deliver Num Lock only as flagsChanged.
+        if event.type == .flagsChanged {
+            let fk = Int(event.keyCode)
+            ckcLog(String(format: "flagsChanged code=%d rawFlags=0x%lx punctMode=%d composing=%d",
+                          fk, event.modifierFlags.rawValue, punctMode ? 1 : 0, buffer.isEmpty ? 0 : 1))
+            if event.keyCode == UInt16(kVK_CapsLock) {
+                let capsOn = event.modifierFlags.contains(.capsLock)
+                if lastCapsLockOn == nil || lastCapsLockOn != capsOn {
+                    lastCapsLockOn = capsOn
+                    StatusConsole.shared.toggleDigitSource()
+                    StatusConsole.shared.show(near: sender as AnyObject?)
+                    ckcLog("CapsLock edge → digitSource=\(StatusConsole.shared.digitSource.rawValue) capsOn=\(capsOn ? 1 : 0)")
+                } else {
+                    ckcLog("CapsLock flagsChanged ignored (no state edge) capsOn=\(capsOn ? 1 : 0)")
+                }
+                return true
+            }
+            // Num Lock flagsChanged → active special only in 小鍵盤 mode
+            if fk == Int(kVK_ANSI_KeypadClear) || fk == 0x47 {
+                if StatusConsole.shared.digitSource == .numpad {
+                    return handleActiveSpecialKey(client: sender)
+                }
+                ckcLog("NumLock flagsChanged ignored (digitSource=numberRow)")
+                return true
+            }
+            return false
+        }
+
+        guard event.type == .keyDown else { return false }
+
+        let keyCode = Int(event.keyCode)
+        let chars = event.charactersIgnoringModifiers ?? event.characters ?? ""
+        let rawFlags = event.modifierFlags
+        // Numpad keys always carry .numericPad; Caps Lock is our digit-source toggle.
+        // Strip those (and .function) so they do not block composition / picks.
+        let flags = rawFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting([.numericPad, .function, .capsLock])
+        let lower = chars.lowercased()
+        let composing = !buffer.isEmpty
+        let hasCandidates = !charCandidates.isEmpty || !phraseCandidates.isEmpty
+        let blocked = hasBlockingModifiers(flags)
+
+        let typedForTrace = event.characters ?? ""
+        // Trace keypad / Num Lock / number-row minus / wildcard keys for debugging.
+        if keyCode == 0x4E || keyCode == 0x45 || keyCode == 0x41 || keyCode == 0x47
+            || keyCode == 0x1B || keyCode == Int(kVK_ANSI_Minus)
+            || keyCode == 0x2C || keyCode == Int(kVK_ANSI_Slash)
+            || keyCode == 0x32 || keyCode == Int(kVK_ANSI_Grave)
+            || rawFlags.contains(.numericPad)
+            || chars == "-" || chars == "+" || chars.contains("−")
+            || typedForTrace == "?" || typedForTrace == "`" || typedForTrace == "~"
+            || chars == "?" || chars == "`" || chars == "~" {
+            ckcLog(String(format: "keyDown code=%d chars=%@ typed=%@ rawFlags=0x%lx flags=0x%lx composing=%d punctMode=%d shift=%d",
+                          keyCode, chars as NSString, typedForTrace as NSString,
+                          rawFlags.rawValue, flags.rawValue,
+                          composing ? 1 : 0, punctMode ? 1 : 0,
+                          rawFlags.contains(.shift) ? 1 : 0))
+        }
+
+        // Ctrl+= → Add Phrase
+        if flags.contains(.control) && !flags.contains(.option) && !flags.contains(.command) {
+            if chars == "=" || chars == "+" || keyCode == kVK_ANSI_Equal {
+                AddPhrasePanel.shared.show(presetCode: buffer.isEmpty ? nil : buffer)
+                return true
+            }
+        }
+
+        let typedChars = event.characters ?? ""
+
+        // 萬能鍵 BEFORE 字-end / punct: "?" and `/~ ONLY compose (never open 標點).
+        // Dismisses punct if visible; "?" stays in marked buffer; digits may follow.
+        // Use rawFlags for Shift — never let Shift block 萬能鍵 (Shift+/ = "?")
+        let wildFlags = flags.union(rawFlags.intersection([.shift]))
+        if isWildcardKeyEvent(keyCode: keyCode, typed: typedChars, charsIgnoring: chars, flags: wildFlags) {
+            ckcLog(String(format: "wildcard HIT code=%d typed=%@ chars=%@ shift=%d punct=%d buf=%@",
+                          keyCode, typedChars as NSString, chars as NSString,
+                          wildFlags.contains(.shift) ? 1 : 0, punctMode ? 1 : 0, buffer as NSString))
+            return appendWildcardMarked(client: sender, via: "wildcard")
+        }
+
+        // End keys: T / * = phrases; Y / bare / = characters (when composing).
+        // Shift+/ is 萬能鍵 (handled above), not 字-end.
+        let isPhraseEnd =
+            (composing && lower == "t" && flags.isEmpty) ||
+            keyCode == kVK_ANSI_KeypadMultiply ||
+            chars == "*" || typedChars == "*"
+        let isBareSlash =
+            !flags.contains(.shift)
+            && typedChars != "?"
+            && (typedChars == "/" || chars == "/" || keyCode == Int(kVK_ANSI_Slash))
+        let isCharEnd =
+            (composing && lower == "y" && flags.isEmpty) ||
+            keyCode == kVK_ANSI_KeypadDivide ||
+            isBareSlash
+
+        if composing && isPhraseEnd {
+            // T / keypad * → 詞 column only
+            lookKind = .phrases
+            selectedIndex = 0
+            refreshCandidates()
+            updateUI(client: sender)
+            return true
+        }
+        if composing && isCharEnd {
+            // Y / keypad / / bare / → 字 column only
+            lookKind = .characters
+            selectedIndex = 0
+            refreshCandidates()
+            updateUI(client: sender)
+            return true
+        }
+
+        // Esc → clear
+        if keyCode == kVK_Escape {
+            if punctMode {
+                exitPunctMode()
+                return true
+            }
+            if composing {
+                clearComposition(client: sender)
+                return true
+            }
+            return false
+        }
+
+        // F11 / F12 → direct ，。 (Windows CKC)
+        if keyCode == kVK_F11 {
+            commitPunct("，", client: sender)
+            return true
+        }
+        if keyCode == kVK_F12 {
+            commitPunct("。", client: sender)
+            return true
+        }
+
+        // Active special key (DigitSource gate):
+        // 小鍵盤 → Num Lock; 鍵盤 → number-row Minus.
+        // Idle → 標點; composing → 萬能鍵 "?"; punctMode → next page.
+        if isActiveSpecialKeyEvent(keyCode: keyCode, characters: chars, rawFlags: rawFlags) {
+            ckcLog(String(format: "specialKey src=%@ code=%d composing=%d punctMode=%d",
+                          StatusConsole.shared.digitSource.rawValue as NSString,
+                          keyCode, composing ? 1 : 0, punctMode ? 1 : 0))
+            return handleActiveSpecialKey(client: sender)
+        }
+
+        // Punct mode: 1–9 pick; Num Lock / keypad -/+ / number-row -/= page; Decimal exits
+        if punctMode {
+            let pages = punctPages
+            let pageCount = max(pages.count, 1)
+            // Number-row Minus or keypad Minus → next page while punct open
+            if isNumberRowMinusEvent(keyCode: keyCode, characters: chars, rawFlags: rawFlags)
+                || isKeypadMinusEvent(keyCode: keyCode, characters: chars, rawFlags: rawFlags) {
+                punctPageIndex = (punctPageIndex + 1) % pageCount
+                showPunctCandidates(client: sender)
+                return true
+            }
+            if isKeypadPlusEvent(keyCode: keyCode, characters: chars, rawFlags: rawFlags)
+                || chars == "=" || keyCode == Int(kVK_ANSI_Equal) {
+                punctPageIndex = (punctPageIndex - 1 + pageCount) % pageCount
+                showPunctCandidates(client: sender)
+                return true
+            }
+            if keyCode == Int(kVK_ANSI_KeypadDecimal) || keyCode == 0x41 {
+                exitPunctMode()
+                return true
+            }
+            if let digitInfo = classifyDigit(keyCode: keyCode, characters: chars, rawFlags: rawFlags), !blocked {
+                // Wildcard composition in progress (buffer has "?") → dismiss 標點, fall through to digit compose.
+                // Intentional punct (Minus opener, empty buffer) still picks marks.
+                if buffer.contains("?") {
+                    exitPunctMode()
+                    ckcLog("digit after wildcard dismissed punct → compose digit=\(digitInfo.value) buffer=\(buffer)")
+                    // fall through to composition digit path below (punctMode now false)
+                } else {
+                    let d = digitInfo.value
+                    let page = pages[max(0, min(punctPageIndex, pages.count - 1))]
+                    let idx: Int
+                    if (1...9).contains(d) { idx = d - 1 }
+                    else if d == 0 { idx = min(8, max(page.count - 1, 0)) }
+                    else { return true }
+                    if idx < page.count { commitPunct(page[idx], client: sender) }
+                    return true
+                }
+            }
+            if keyCode == kVK_Space || keyCode == kVK_Return || keyCode == kVK_ANSI_KeypadEnter {
+                if let pick = CandidateWindow.shared.selectedCandidate {
+                    commitPunct(pick, client: sender)
+                    return true
+                }
+                exitPunctMode()
+                return true
+            }
+            if keyCode == kVK_UpArrow {
+                selectedIndex = CandidateWindow.shared.moveSelection(-1)
+                return true
+            }
+            if keyCode == kVK_DownArrow {
+                selectedIndex = CandidateWindow.shared.moveSelection(1)
+                return true
+            }
+            if flags.isEmpty, lower.count == 1, let ch = lower.first, ch.isLetter {
+                exitPunctMode()
+                return false
+            }
+            exitPunctMode()
+        }
+
+        // Keypad Decimal = 輸入碼刪除鍵 (delete last code digit). Not 。
+        if keyCode == kVK_ANSI_KeypadDecimal && flags.isEmpty {
+            if composing {
+                if lookKind != .all {
+                    lookKind = .all
+                    refreshCandidates()
+                    updateUI(client: sender)
+                    return true
+                }
+                buffer.removeLast()
+                selectedIndex = 0
+                refreshCandidates()
+                updateUI(client: sender)
+                return true
+            }
+            return false
+        }
+
+        // Navigation when candidates visible
+        if hasCandidates {
+            if keyCode == kVK_UpArrow {
+                selectedIndex = CandidateWindow.shared.moveSelection(-1)
+                updateUI(client: sender)
+                return true
+            }
+            if keyCode == kVK_DownArrow {
+                selectedIndex = CandidateWindow.shared.moveSelection(1)
+                updateUI(client: sender)
+                return true
+            }
+            if keyCode == kVK_LeftArrow || keyCode == kVK_RightArrow {
+                _ = CandidateWindow.shared.switchColumn()
+                selectedIndex = CandidateWindow.shared.globalSelectedIndex
+                updateUI(client: sender)
+                return true
+            }
+            if keyCode == kVK_Tab {
+                _ = CandidateWindow.shared.switchColumn()
+                selectedIndex = CandidateWindow.shared.globalSelectedIndex
+                updateUI(client: sender)
+                return true
+            }
+
+            // Page: keypad Minus/=/PageUp/Down/,.[] — number-row Minus pages only in numpad mode
+            let numberRowMinusPages = StatusConsole.shared.digitSource == .numpad
+                && isNumberRowMinusEvent(keyCode: keyCode, characters: chars, rawFlags: rawFlags)
+            if numberRowMinusPages
+                || keyCode == Int(kVK_PageUp)
+                || isKeypadMinusEvent(keyCode: keyCode, characters: chars, rawFlags: rawFlags) {
+                selectedIndex = CandidateWindow.shared.prevPage()
+                updateUI(client: sender)
+                return true
+            }
+            if chars == "=" || chars == "+" || keyCode == Int(kVK_ANSI_Equal) ||
+                isKeypadPlusEvent(keyCode: keyCode, characters: chars, rawFlags: rawFlags)
+                || keyCode == Int(kVK_PageDown) {
+                selectedIndex = CandidateWindow.shared.nextPage()
+                updateUI(client: sender)
+                return true
+            }
+            if chars == "," || chars == "[" || keyCode == kVK_ANSI_Comma || keyCode == kVK_ANSI_LeftBracket {
+                selectedIndex = CandidateWindow.shared.prevPage()
+                updateUI(client: sender)
+                return true
+            }
+            if chars == "." || chars == "]" || keyCode == kVK_ANSI_Period || keyCode == kVK_ANSI_RightBracket {
+                selectedIndex = CandidateWindow.shared.nextPage()
+                updateUI(client: sender)
+                return true
+            }
+        }
+
+        // Space / Return → commit highlighted
+        if keyCode == kVK_Space || keyCode == kVK_Return || keyCode == kVK_ANSI_KeypadEnter {
+            if let pick = CandidateWindow.shared.selectedCandidate
+                ?? charCandidates.first
+                ?? phraseCandidates.first {
+                commit(pick, client: sender)
+                return true
+            }
+            if composing {
+                clearComposition(client: sender)
+                return true
+            }
+            return false
+        }
+
+        // Backspace
+        if keyCode == kVK_Delete || keyCode == kVK_ForwardDelete {
+            if composing {
+                // If filtered, first Backspace restores both columns
+                if lookKind != .all {
+                    lookKind = .all
+                    refreshCandidates()
+                    updateUI(client: sender)
+                    return true
+                }
+                buffer.removeLast()
+                selectedIndex = 0
+                refreshCandidates()
+                updateUI(client: sender)
+                return true
+            }
+            return false
+        }
+
+        // Digits: after Y// → pick 字; after T/* → pick 詞;
+        // at 6 digits → 1–9 pick 詞 directly (no T/* needed); else compose from active DigitSource.
+        if let digitInfo = classifyDigit(keyCode: keyCode, characters: chars, rawFlags: rawFlags) {
+            let digit = digitInfo.value
+            let fromActiveSource = digitInfo.source == StatusConsole.shared.digitSource
+            let pickModifiers = flags.contains(.option) || flags.contains(.control)
+            let atMaxCode = buffer.count >= 6
+
+            if digit >= 1 && digit <= 9 && hasCandidates && flags.isEmpty {
+                // Full 6-digit code: 1–9 commits phrase (Windows-style; no T/* required)
+                if atMaxCode && !phraseCandidates.isEmpty && lookKind != .characters {
+                    lookKind = .phrases
+                    if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
+                        commit(text, client: sender)
+                        return true
+                    }
+                    return true
+                }
+                // Phrase filter (T / *): 1–9 commits phrase
+                if lookKind == .phrases {
+                    if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
+                        commit(text, client: sender)
+                        return true
+                    }
+                    return true
+                }
+                // Char filter (Y / /): 1–9 commits character
+                if lookKind == .characters {
+                    if let text = CandidateWindow.shared.selectCharOnPage(digit) {
+                        commit(text, client: sender)
+                        return true
+                    }
+                    return true
+                }
+                // At 6 digits with only chars (no phrases): allow char pick
+                if atMaxCode && !charCandidates.isEmpty && phraseCandidates.isEmpty {
+                    if let text = CandidateWindow.shared.selectCharOnPage(digit) {
+                        commit(text, client: sender)
+                        return true
+                    }
+                    return true
+                }
+            }
+
+            // Option/Ctrl+1–9 always picks left column (even in .all / while composing)
+            if pickModifiers && digit >= 1 && digit <= 9 && hasCandidates {
+                if let text = CandidateWindow.shared.selectCharOnPage(digit) {
+                    commit(text, client: sender)
+                    return true
+                }
+                return true
+            }
+
+            // Composition digit — only from active source, no modifiers; never a 7th digit.
+            // Digit after "?" (or any compose) dismisses 標點 if it was left open.
+            if fromActiveSource && flags.isEmpty {
+                if punctMode {
+                    exitPunctMode()
+                    ckcLog("digit compose dismissed punct buffer=\(buffer)")
+                }
+                if atMaxCode {
+                    // Already 6 digits: treat 1–9 as phrase pick if possible (any source already handled above)
+                    ckcLog("digit \(digit) atMaxCode swallowed source=\(digitInfo.source.rawValue)")
+                    return true
+                }
+                if lookKind != .all {
+                    lookKind = .all
+                }
+                buffer.append(Character(String(digit)))
+                selectedIndex = 0
+                refreshCandidates()
+                // Auto-focus 詞 when code reaches 6 digits and phrases exist
+                if buffer.count >= 6 && !phraseCandidates.isEmpty {
+                    lookKind = .phrases
+                    CandidateWindow.shared.focusColumn(.phrases)
+                }
+                ckcLog("digit compose '\(buffer)' src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue) chars=\(charCandidates.count) phrases=\(phraseCandidates.count)")
+                updateUI(client: sender)
+                return true
+            }
+
+            // Digit from the OTHER source → pass through as English
+            ckcLog("digit \(digit) REJECTED src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue) flags=0x\(String(flags.rawValue, radix: 16))")
+            return false
+        }
+
+        if composing {
+            // Letters pass through as English so the left keyboard stays free.
+            // T/Y already handled above as 詞/字 end keys; do not swallow A–Z/QWE etc.
+            if flags.isEmpty, lower.count == 1, let ch = lower.first, ch.isLetter {
+                return false
+            }
+            // Swallow other unused keys while composing (keep buffer)
+            return true
+        }
+        return false
+    }
+
+    override func candidates(_ sender: Any!) -> [Any]! {
+        // Combined for IMK fallback; UI uses two columns
+        return charCandidates + phraseCandidates
+    }
+
+    // MARK: - Internals
+
+    private func refreshCandidates() {
+        let useWild = buffer.contains("?")
+        func lookup(_ kind: DictionaryStore.CandidateKind) -> [String] {
+            useWild
+                ? DictionaryStore.shared.candidatesWildcard(for: buffer, kind: kind)
+                : DictionaryStore.shared.candidates(for: buffer, kind: kind)
+        }
+        switch lookKind {
+        case .all:
+            charCandidates = lookup(.characters)
+            phraseCandidates = lookup(.phrases)
+        case .characters:
+            charCandidates = lookup(.characters)
+            phraseCandidates = []
+        case .phrases:
+            charCandidates = []
+            phraseCandidates = lookup(.phrases)
+        }
+        if selectedIndex >= max(charCandidates.count, phraseCandidates.count) {
+            selectedIndex = 0
+        }
+    }
+
+    private func updateUI(client: Any?) {
+        let clientObj = (client as AnyObject?) ?? currentClient
+        updateMarked(client: clientObj)
+        updateCandidateWindow(client: clientObj)
+    }
+
+    private func updateMarked(client: Any?) {
+        guard let client = (client as? IMKTextInput) ?? (currentClient as? IMKTextInput) else { return }
+        var display = buffer
+        switch lookKind {
+        case .phrases: display += " [詞]"
+        case .characters: display += " [字]"
+        case .all: break
+        }
+        let attr = NSAttributedString(string: display)
+        client.setMarkedText(
+            attr,
+            selectionRange: NSRange(location: display.utf16.count, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+    }
+
+    private func updateCandidateWindow(client: Any?) {
+        if buffer.isEmpty {
+            CandidateWindow.shared.hide()
+            return
+        }
+        let mode: CandidateDisplayMode
+        let focus: CandidateColumn?
+        switch lookKind {
+        case .all:
+            mode = .both
+            focus = nil
+        case .characters:
+            mode = .characters
+            focus = .characters
+        case .phrases:
+            mode = .phrases
+            focus = .phrases
+        }
+        CandidateWindow.shared.show(
+            composition: buffer,
+            chars: charCandidates,
+            phrases: phraseCandidates,
+            mode: mode,
+            focus: focus,
+            near: (client as AnyObject?) ?? currentClient
+        )
+        selectedIndex = CandidateWindow.shared.globalSelectedIndex
+    }
+
+    private func commit(_ text: String, client: Any?) {
+        guard let client = (client as? IMKTextInput) ?? (currentClient as? IMKTextInput) else { return }
+        client.setMarkedText("", selectionRange: NSRange(location: 0, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+        buffer = ""
+        charCandidates = []
+        phraseCandidates = []
+        lookKind = .all
+        selectedIndex = 0
+        CandidateWindow.shared.hide()
+        NSLog("[CKC] committed %@", text)
+    }
+
+    private func clearComposition(client: Any?) {
+        punctMode = false
+        punctPageIndex = 0
+        buffer = ""
+        charCandidates = []
+        phraseCandidates = []
+        lookKind = .all
+        selectedIndex = 0
+        CandidateWindow.shared.hide()
+        if let client = (client as? IMKTextInput) ?? (currentClient as? IMKTextInput) {
+            client.setMarkedText("", selectionRange: NSRange(location: 0, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+        }
+    }
+
+
+    // MARK: - Punctuation (Windows CKC keypad "-")
+
+    /// Idle special key (DigitSource-gated) opens 標點; composing special key → "?".
+    private func enterPunctMode(client: Any?) {
+        punctMode = true
+        punctPageIndex = 0
+        buffer = ""
+        lookKind = .characters
+        charCandidates = []
+        phraseCandidates = []
+        selectedIndex = 0
+        if DictionaryStore.shared.punctuationList.isEmpty {
+            DictionaryStore.shared.loadPunctuationTable()
+        }
+        showPunctCandidates(client: client)
+        ckcLog(String(format: "punctMode ON page %d/%d items=%d visible=%d",
+                      punctPageIndex + 1, punctPages.count,
+                      DictionaryStore.shared.punctuationList.count,
+                      CandidateWindow.shared.isVisible ? 1 : 0))
+    }
+
+    private func exitPunctMode() {
+        if punctMode {
+            ckcLog("punctMode OFF")
+        }
+        punctMode = false
+        punctPageIndex = 0
+        lookKind = .all
+        charCandidates = []
+        phraseCandidates = []
+        selectedIndex = 0
+        CandidateWindow.shared.hide()
+    }
+
+    private func showPunctCandidates(client: Any?) {
+        let pages = punctPages
+        guard !pages.isEmpty else {
+            ckcLog("punct pages empty")
+            return
+        }
+        if punctPageIndex >= pages.count { punctPageIndex = 0 }
+        let page = pages[punctPageIndex]
+        charCandidates = page
+        phraseCandidates = []
+        lookKind = .characters
+        selectedIndex = 0
+        let clientObj = (client as AnyObject?) ?? currentClient
+        // Same CandidateWindow path/chrome/caret positioning as 字/詞 — not parked by StatusConsole.
+        CandidateWindow.shared.show(
+            composition: "標點 \(punctPageIndex + 1)/\(pages.count)",
+            chars: page,
+            phrases: [],
+            mode: .characters,
+            focus: .characters,
+            near: clientObj
+        )
+        ckcLog(String(format: "showPunct page=%d count=%d frame=%@",
+                      punctPageIndex + 1, page.count,
+                      NSStringFromRect(CandidateWindow.shared.frame)))
+    }
+
+    private func commitPunct(_ text: String, client: Any?) {
+        exitPunctMode()
+        guard let client = (client as? IMKTextInput) ?? (currentClient as? IMKTextInput) else { return }
+        client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+        NSLog("[CKC] punct %@", text)
+    }
+
+    private struct DigitInfo {
+        let value: Int
+        let source: DigitSource
+    }
+
+    private func classifyDigit(keyCode: Int, characters: String, rawFlags: NSEvent.ModifierFlags) -> DigitInfo? {
+        // Numpad keys (Carbon keycodes) — primary path for 小鍵盤 mode
+        switch keyCode {
+        case Int(kVK_ANSI_Keypad0): return DigitInfo(value: 0, source: .numpad)
+        case Int(kVK_ANSI_Keypad1): return DigitInfo(value: 1, source: .numpad)
+        case Int(kVK_ANSI_Keypad2): return DigitInfo(value: 2, source: .numpad)
+        case Int(kVK_ANSI_Keypad3): return DigitInfo(value: 3, source: .numpad)
+        case Int(kVK_ANSI_Keypad4): return DigitInfo(value: 4, source: .numpad)
+        case Int(kVK_ANSI_Keypad5): return DigitInfo(value: 5, source: .numpad)
+        case Int(kVK_ANSI_Keypad6): return DigitInfo(value: 6, source: .numpad)
+        case Int(kVK_ANSI_Keypad7): return DigitInfo(value: 7, source: .numpad)
+        case Int(kVK_ANSI_Keypad8): return DigitInfo(value: 8, source: .numpad)
+        case Int(kVK_ANSI_Keypad9): return DigitInfo(value: 9, source: .numpad)
+        default: break
+        }
+        // Number row
+        switch keyCode {
+        case Int(kVK_ANSI_0): return DigitInfo(value: 0, source: .numberRow)
+        case Int(kVK_ANSI_1): return DigitInfo(value: 1, source: .numberRow)
+        case Int(kVK_ANSI_2): return DigitInfo(value: 2, source: .numberRow)
+        case Int(kVK_ANSI_3): return DigitInfo(value: 3, source: .numberRow)
+        case Int(kVK_ANSI_4): return DigitInfo(value: 4, source: .numberRow)
+        case Int(kVK_ANSI_5): return DigitInfo(value: 5, source: .numberRow)
+        case Int(kVK_ANSI_6): return DigitInfo(value: 6, source: .numberRow)
+        case Int(kVK_ANSI_7): return DigitInfo(value: 7, source: .numberRow)
+        case Int(kVK_ANSI_8): return DigitInfo(value: 8, source: .numberRow)
+        case Int(kVK_ANSI_9): return DigitInfo(value: 9, source: .numberRow)
+        default: break
+        }
+        // Fallback by character — honor .numericPad so keypad never mislabeled as number-row
+        if characters.count == 1, let ch = characters.first, ch.isNumber,
+           let v = Int(String(ch)), (0...9).contains(v) {
+            let src: DigitSource = rawFlags.contains(.numericPad) ? .numpad : .numberRow
+            return DigitInfo(value: v, source: src)
+        }
+        return nil
+    }
+}

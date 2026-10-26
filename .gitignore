@@ -1,0 +1,9 @@
+build/
+*.pkg
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
+xcuserdata/
+DerivedData/
