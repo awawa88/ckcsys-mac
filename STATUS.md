@@ -1,5 +1,31 @@
 # Ckcsys macOS IMK — STATUS
 
+Time: 2026-10-27 12:25 Asia/Hong_Kong (UTC+8)
+Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
+
+## Local 0.2.20 (build 22) — association commit inserts suffix only (no seed double)
+
+Keeps 0.2.19 選詞 marked ` **`. Fix: picking an association/guess phrase after a committed 字 no longer re-inserts the seed character (習 + 習慣 was 習習慣).
+
+Strip logic (`associationSuffixToInsert` in `commit`):
+1. Candidate list still shows **full** phrases (習慣) for readability.
+2. On association commit (`associationSeed` non-empty): insert only the **suffix** after the stored seed (習慣 → 慣).
+3. If phrase equals seed alone → insert nothing / dismiss.
+4. Seed is stored in Traditional lexicon form (same as phrase lookup). Strip Traditional `hasPrefix(seed)` first; on 繁/簡 mismatch, match via `convertToSimplified` then drop the same character count from the Traditional phrase; convert only the remaining suffix for simplified outputMode.
+5. Non-association commits unchanged; do not begin 聯想 again on an association suffix commit.
+
+Retest:
+- Commit 習 → T/× → pick 習慣 → document has **習慣** once (not 習習慣).
+- Same under 簡: 习 + pick 習慣 → 习惯 once.
+- Phrase == seed → no extra insert; guesses dismiss.
+
+Install path (ONLY): `~/Library/Input Methods/Ckcsys.app`
+No GitHub push/merge/release.
+
+---
+
+# Ckcsys macOS IMK — STATUS
+
 Time: 2026-10-27 12:20 Asia/Hong_Kong (UTC+8)
 Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
 

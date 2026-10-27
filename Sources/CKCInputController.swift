@@ -7,6 +7,7 @@ import Carbon.HIToolbox
 /// T/* = 詞 then 1–9 pick; Y// = 字 then 1–9 pick; −/= page; Space commit.
 /// After committing any single 字: show 聯想 phrases starting with that char; digit picks need 選詞 first
 /// (選詞 also sets marked caret " **" like normal phrase mode).
+/// Association commit inserts only the suffix after the seed (already in the document).
 /// Auto 選詞/選字 (marked **/ *) when dead-end (!hasLongerCode) OR exact-詞 with no 字 left
 /// (e.g. 06177 → ** then 1 → 自己) even if longer keys exist. Else keep appending.
 /// DigitSource flips only via Caps Lock / StatusConsole (never on digit keys).
@@ -1108,17 +1109,33 @@ class CKCInputController: IMKInputController {
 
     private func commit(_ text: String, client: Any?) {
         guard let client = (client as? IMKTextInput) ?? (currentClient as? IMKTextInput) else { return }
-        
-        // Convert to Simplified if output mode is simplified; candidates always show Traditional
-        let outputText: String
-        if StatusConsole.shared.outputMode == .simplified {
-            outputText = convertToSimplified(text)
+
+        // Association pick: seed 字 is already in the document — insert only the suffix
+        // (習慣 → 慣 when seed is 習). Candidates still list full phrases for readability.
+        let fromAssociation = !associationSeed.isEmpty
+        let insertSource: String
+        if fromAssociation {
+            insertSource = associationSuffixToInsert(phrase: text)
+            ckcLog("association commit phrase='\(text)' seed='\(associationSeed)' suffix='\(insertSource)'")
         } else {
-            outputText = text
+            insertSource = text
         }
-        
+
+        // Convert to Simplified if output mode is simplified; candidates always show Traditional.
+        // Strip used Traditional seed/phrase first; convert only the remaining suffix.
+        let outputText: String
+        if insertSource.isEmpty {
+            outputText = ""
+        } else if StatusConsole.shared.outputMode == .simplified {
+            outputText = convertToSimplified(insertSource)
+        } else {
+            outputText = insertSource
+        }
+
         client.setMarkedText("", selectionRange: NSRange(location: 0, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
-        client.insertText(outputText, replacementRange: NSRange(location: NSNotFound, length: 0))
+        if !outputText.isEmpty {
+            client.insertText(outputText, replacementRange: NSRange(location: NSNotFound, length: 0))
+        }
         buffer = ""
         charCandidates = []
         phraseCandidates = []
@@ -1128,11 +1145,32 @@ class CKCInputController: IMKInputController {
         let traditional = text
         clearAssociation(hideWindow: false)
         CandidateWindow.shared.hide()
-        NSLog("[CKC] committed %@ (outputMode=%@)", outputText, StatusConsole.shared.outputMode.rawValue)
+        NSLog("[CKC] committed %@ (outputMode=%@ assoc=%d)", outputText, StatusConsole.shared.outputMode.rawValue, fromAssociation ? 1 : 0)
         // Any single 字 → show common phrases starting with that character (習 is just an example).
-        if traditional.count == 1 {
+        // Do not re-associate on an association suffix commit (even if suffix is one 字).
+        if !fromAssociation && traditional.count == 1 {
             beginAssociation(for: traditional, client: client)
         }
+    }
+
+    /// Suffix after the association seed for document insert.
+    /// Seed is stored in the same Traditional lexicon form used for phrase lookup; strip that
+    /// form from the phrase. If Traditional prefix fails (繁/簡 edge), match via simplified
+    /// forms and drop the same character count from the Traditional phrase so outputMode
+    /// conversion still runs on Traditional text. Phrase == seed → empty (dismiss, no insert).
+    private func associationSuffixToInsert(phrase: String) -> String {
+        let seed = associationSeed
+        guard !seed.isEmpty else { return phrase }
+        if phrase.hasPrefix(seed) {
+            return String(phrase.dropFirst(seed.count))
+        }
+        let seedS = convertToSimplified(seed)
+        let phraseS = convertToSimplified(phrase)
+        if phraseS.hasPrefix(seedS), phrase.count >= seed.count {
+            return String(phrase.dropFirst(seed.count))
+        }
+        // Avoid doubling an already-committed seed when forms do not match cleanly.
+        return ""
     }
 
     private func clearComposition(client: Any?) {
