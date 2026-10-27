@@ -55,8 +55,6 @@ final class CandidateWindow: NSPanel {
     private var initialFallbackPosition: NSPoint?
     /// Last IMK client used for caret positioning (for re-anchor after 光/錨 toggle).
     private weak var lastClient: AnyObject?
-    /// Local event monitor to force cursor even when NSButton.cursor fails in nonactivating panels.
-    private var cursorMonitor: Any?
 
     private let panelWidthBoth: CGFloat = 340
     private let panelWidthSingle: CGFloat = 200
@@ -363,9 +361,6 @@ final class CandidateWindow: NSPanel {
         level = .popUpMenu
         orderFrontRegardless()
         applyAppearance()
-        
-        // Start monitoring for cursor changes (fallback for nonactivating panel)
-        startCursorMonitoring()
     }
 
     /// Idle 標點 picker — same chrome and caret positioning as composition candidates.
@@ -399,7 +394,9 @@ final class CandidateWindow: NSPanel {
         // Reset cached positions for next composition session
         lastKnownCaretRect = nil
         initialFallbackPosition = nil
-        stopCursorMonitoring()
+        for row in charRowViews + phraseRowViews {
+            row.clearHoverAndCursor()
+        }
         orderOut(nil)
     }
 
@@ -545,52 +542,10 @@ final class CandidateWindow: NSPanel {
         onCandidateClicked?(text, column)
     }
 
-    // MARK: - Cursor monitoring (fallback for nonactivating panel)
-    
-    /// Install a local event monitor to force cursor when over clickable candidates.
-    /// NSButton.cursor may not work in nonactivating panels under Chrome, so we
-    /// intercept mouseMoved globally and check if we're over a candidate.
-    private func startCursorMonitoring() {
-        stopCursorMonitoring()
-        
-        cursorMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
-            guard let self = self, self.isVisible else { return event }
-            
-            let mouseLocation = NSEvent.mouseLocation
-            let windowFrame = self.frame
-            
-            // Check if mouse is within our panel bounds
-            guard windowFrame.contains(mouseLocation) else {
-                // Outside panel - let default cursor show
-                return event
-            }
-            
-            // Convert to window coordinates for hit testing
-            let windowPoint = self.convertPoint(fromScreen: mouseLocation)
-            
-            // Use AppKit hit testing to find which view is under the mouse
-            if let hitView = self.contentView?.hitTest(windowPoint) {
-                // Check if hit view is a candidate row or descendant
-                for row in self.charRowViews + self.phraseRowViews {
-                    if (hitView == row || hitView.isDescendant(of: row)) && !row.isEmpty {
-                        NSCursor.pointingHand.set()
-                        return event
-                    }
-                }
-            }
-            
-            // Over panel but not over a candidate - show arrow
-            NSCursor.arrow.set()
-            return event
-        }
-    }
-    
-    private func stopCursorMonitoring() {
-        if let monitor = cursorMonitor {
-            NSEvent.removeMonitor(monitor)
-            cursorMonitor = nil
-        }
-    }
+    // MARK: - Cursor
+    // Inactive LSUIElement + .nonactivatingPanel: NSCursor.set() from a local
+    // mouseMoved monitor is ignored by AppKit (SO 18132778). Rows use
+    // NSTrackingArea [.activeAlways] + NSCursor.push/pop instead.
 
     // MARK: - Layout / paint
 
@@ -963,8 +918,8 @@ final class CandidateWindow: NSPanel {
 
 // MARK: - Row
 
-/// Clickable candidate row as an actual NSButton for proper cursor + hover in nonactivating panels.
-/// Real NSButton has cursor support that works where NSView/NSControl cursor rects fail.
+/// Clickable candidate row. Cursor via NSTrackingArea [.activeAlways] + push/pop
+/// (inactive apps ignore NSCursor.set()). Hover chrome works even if cursor stays arrow.
 private final class CandidateRowView: NSButton {
     private let numberLabel = NSTextField(labelWithString: "")
     private let textLabel = NSTextField(labelWithString: "")
@@ -972,21 +927,23 @@ private final class CandidateRowView: NSButton {
     var onClicked: (() -> Void)?
     fileprivate(set) var isEmpty: Bool = true
 
+    private var isSelected: Bool = false
+    private var isHovered: Bool = false
+    private var didPushCursor: Bool = false
+    private var trackingArea: NSTrackingArea?
+
+    private static var lastLogAt: TimeInterval = 0
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        
-        // NSButton configuration for transparent clickable area
+
         isBordered = false
         bezelStyle = .inline
         title = ""
         setButtonType(.momentaryChange)
         wantsLayer = true
         layer?.cornerRadius = 6
-        
-        // Cursor: AppKit has no NSButton.cursor; use resetCursorRects + local
-        // mouseMoved monitor (startCursorMonitoring) for nonactivating panels.
 
-        // Labels as non-interactive subviews for display
         numberLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
         numberLabel.textColor = .secondaryLabelColor
         numberLabel.alignment = .left
@@ -1020,51 +977,151 @@ private final class CandidateRowView: NSButton {
             textLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
             textLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
-        
-        // Wire button action
+
         target = self
         action = #selector(handleClick)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:)") }
-    
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        // activeAlways: cursorUpdate is NOT delivered; use enter/moved → push, exit → pop.
+        let options: NSTrackingArea.Options = [
+            .activeAlways,
+            .mouseMoved,
+            .mouseEnteredAndExited,
+            .inVisibleRect,
+        ]
+        let area = NSTrackingArea(rect: .zero, options: options, owner: self, userInfo: nil)
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        guard !isEmpty, !isHidden else { return }
+        ensurePanelKey()
+        setHovered(true)
+        pushHandCursorIfNeeded()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        guard !isEmpty, !isHidden else { return }
+        if !isHovered {
+            setHovered(true)
+        }
+        pushHandCursorIfNeeded()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        setHovered(false)
+        popHandCursorIfNeeded()
+    }
+
     @objc private func handleClick() {
         guard !isEmpty else { return }
         onClicked?()
     }
 
-    override func resetCursorRects() {
-        discardCursorRects()
-        if !isEmpty {
-            addCursorRect(bounds, cursor: .pointingHand)
+    /// Drop hover chrome + matching cursor pop (panel hide / reload).
+    fileprivate func clearHoverAndCursor() {
+        setHovered(false)
+        popHandCursorIfNeeded()
+    }
+
+    private func ensurePanelKey() {
+        guard let panel = window as? NSPanel else { return }
+        // Prefer keying the nonactivating panel without NSApp.activate.
+        // becomesKeyOnlyIfNeeded is already true on CandidateWindow.
+        if !panel.isKeyWindow {
+            panel.makeKeyAndOrderFront(nil)
+            Self.ckcLog("candidate hover → makeKeyAndOrderFront")
+        }
+    }
+
+    private func pushHandCursorIfNeeded() {
+        guard !didPushCursor else { return }
+        NSCursor.pointingHand.push()
+        didPushCursor = true
+        Self.ckcLog("cursor push pointingHand")
+    }
+
+    private func popHandCursorIfNeeded() {
+        guard didPushCursor else { return }
+        NSCursor.pop()
+        didPushCursor = false
+        Self.ckcLog("cursor pop")
+    }
+
+    private func setHovered(_ hovered: Bool) {
+        guard isHovered != hovered else { return }
+        isHovered = hovered
+        applyChrome()
+        if hovered {
+            Self.ckcLog("row hover")
         }
     }
 
     func configure(label: String, text: String, selected: Bool, labelWidth: CGFloat = 16) {
         isEmpty = text.isEmpty
-        
+        isSelected = selected
+
         numberLabel.stringValue = label
         textLabel.stringValue = text
         labelWidthConstraint.constant = labelWidth
-        
-        // Enable/disable; cursor via resetCursorRects + local monitor
+
+        isEnabled = !isEmpty
         if isEmpty {
-            isEnabled = false
-        } else {
-            isEnabled = true
+            clearHoverAndCursor()
         }
-        window?.invalidateCursorRects(for: self)
-        
-        if selected {
+        applyChrome()
+    }
+
+    private func applyChrome() {
+        if isSelected {
+            // Keyboard / focused selection
             layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
             numberLabel.textColor = .controlAccentColor
             textLabel.textColor = .labelColor
             textLabel.font = NSFont.systemFont(ofSize: 15, weight: .semibold)
+        } else if isHovered && !isEmpty {
+            // Mouse hover — distinct from selected so clickability is obvious even if cursor stays arrow
+            layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.12).cgColor
+            numberLabel.textColor = .secondaryLabelColor
+            textLabel.textColor = .labelColor
+            textLabel.font = NSFont.systemFont(ofSize: 15, weight: .medium)
         } else {
             layer?.backgroundColor = NSColor.clear.cgColor
             numberLabel.textColor = .secondaryLabelColor
             textLabel.textColor = .labelColor
             textLabel.font = NSFont.systemFont(ofSize: 15, weight: .medium)
         }
+    }
+
+    /// Append to /tmp/ckc-ime.log + NSLog; throttle noisy cursor/hover lines.
+    private static func ckcLog(_ message: String) {
+        let now = Date().timeIntervalSince1970
+        if now - lastLogAt < 0.35 {
+            return
+        }
+        lastLogAt = now
+        let line = message + "\n"
+        let path = "/tmp/ckc-ime.log"
+        if let data = line.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: path),
+               let handle = FileHandle(forWritingAtPath: path) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                handle.closeFile()
+            } else {
+                FileManager.default.createFile(atPath: path, contents: data)
+            }
+        }
+        NSLog("%@", "[CKC] " + message)
     }
 }

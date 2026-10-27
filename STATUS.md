@@ -1,7 +1,25 @@
 # Ckcsys macOS IMK — STATUS
 
-Time: 2026-10-27 11:20 Asia/Hong_Kong (UTC+8)
+Time: 2026-10-27 11:30 Asia/Hong_Kong (UTC+8)
 Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
+
+## Local 0.2.12 (build 14) — inactive-panel cursor push/pop + hover chrome
+
+Andrew: pointing-hand over candidates never worked. Root cause: LSUIElement + `.nonactivatingPanel` — AppKit ignores `NSCursor.set()` while inactive (SO 18132778). Prior local mouseMoved monitor was ineffective.
+
+Change (local only — not pushed):
+1. Per-row `NSTrackingArea` `[.activeAlways, .mouseMoved, .mouseEnteredAndExited, .inVisibleRect]`.
+2. `NSCursor.pointingHand.push()` once on enter/moved over non-empty row; matching `pop()` on exit (tracked to avoid stack spam).
+3. On hover: `makeKeyAndOrderFront` the candidate panel (no `NSApp.activate` yet — next lever if push still ignored).
+4. Distinct hover background (`labelColor` 12% alpha) vs selected (accent 22%) so clickability is visible even if cursor stays arrow.
+5. `acceptsFirstMouse` true on rows; removed ineffective local mouseMoved `.set()` monitor.
+6. Throttled `ckcLog` for push/pop/hover/makeKey → `/tmp/ckc-ime.log`.
+
+Prove: hover a candidate in Chrome — expect hand **or** clear hover chrome. If still arrow-only, next lever is carefully scoped activate-on-hover.
+
+Install path (ONLY): `~/Library/Input Methods/Ckcsys.app`
+
+---
 
 ## Local 0.2.11 (build 13) — single install; Notes/iMessage init + shared hide; BR resize kept
 
