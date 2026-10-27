@@ -686,7 +686,6 @@ final class CandidateWindow: NSPanel {
         let screen: NSScreen?
         let visible: NSRect
         var rectToUse: NSRect?
-        var usingFallback = false
         
         // Prefer good fresh rect > suspicious fresh rect > cached rect > fallback
         if let fresh = freshAnchor {
@@ -713,7 +712,6 @@ final class CandidateWindow: NSPanel {
             visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
         } else {
             // No rect at all - use stable fallback
-            usingFallback = true
             let mouse = NSEvent.mouseLocation
             screen = screenFor(mouse)
             visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
@@ -951,8 +949,8 @@ private final class CandidateRowView: NSButton {
         wantsLayer = true
         layer?.cornerRadius = 6
         
-        // NSButton.cursor property for nonactivating panels - this is the key
-        cursor = .pointingHand
+        // Cursor: AppKit has no NSButton.cursor; use resetCursorRects + local
+        // mouseMoved monitor (startCursorMonitoring) for nonactivating panels.
 
         // Labels as non-interactive subviews for display
         numberLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
@@ -1001,22 +999,27 @@ private final class CandidateRowView: NSButton {
         onClicked?()
     }
 
+    override func resetCursorRects() {
+        discardCursorRects()
+        if !isEmpty {
+            addCursorRect(bounds, cursor: .pointingHand)
+        }
+    }
+
     func configure(label: String, text: String, selected: Bool, labelWidth: CGFloat = 16) {
-        let wasEmpty = isEmpty
         isEmpty = text.isEmpty
         
         numberLabel.stringValue = label
         textLabel.stringValue = text
         labelWidthConstraint.constant = labelWidth
         
-        // Update NSButton cursor based on content
+        // Enable/disable; cursor via resetCursorRects + local monitor
         if isEmpty {
-            cursor = .arrow
             isEnabled = false
         } else {
-            cursor = .pointingHand
             isEnabled = true
         }
+        window?.invalidateCursorRects(for: self)
         
         if selected {
             layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
