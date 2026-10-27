@@ -583,6 +583,31 @@ final class DictionaryStore {
         return false
     }
 
+    /// Proper shorter prefixes of `code` that already have an exact 詞 (≥2 chars) in user or system.
+    /// Save-time awareness only — shorter 詞 are normal CKC; typing still composes past them
+    /// when `hasCode(withPrefix:)` says the longer code exists (see 0.2.22).
+    func shorterExactPhrases(for code: String) -> [(code: String, samples: [String])] {
+        let code = code.trimmingCharacters(in: .whitespaces)
+        guard code.count >= 2, code.allSatisfy({ $0.isNumber }) else { return [] }
+        var out: [(code: String, samples: [String])] = []
+        let chars = Array(code)
+        for i in 1..<chars.count {
+            let p = String(chars[..<i])
+            var samples: [String] = []
+            var seen = Set<String>()
+            for w in (userExact[p] ?? []) where w.count >= 2 {
+                if seen.insert(w).inserted { samples.append(w) }
+            }
+            for w in (exact[p] ?? []) where w.count >= 2 {
+                if seen.insert(w).inserted { samples.append(w) }
+            }
+            if !samples.isEmpty {
+                out.append((code: p, samples: Array(samples.prefix(3))))
+            }
+        }
+        return out
+    }
+
     /// Candidates: user phrases first, then exact system, then prefix matches.
     func candidates(for code: String, kind: CandidateKind = .all) -> [String] {
         guard !code.isEmpty else { return [] }

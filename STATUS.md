@@ -1,5 +1,29 @@
 # Ckcsys macOS IMK — STATUS
 
+Time: 2026-10-27 13:03 Asia/Hong_Kong (UTC+8)
+Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
+
+## Local 0.2.23 (build 25) — save-time shorter-詞 check (Add Phrase)
+
+Ask: when saving a new phrase, IME should also check whether shorter 詞 exist on that code’s prefixes, so display/typing expectations are clear (follow-up to 58834→輸入法 / 5883→中等／責令).
+
+Keep: type-time `hasCode(withPrefix:)` compose fix from 0.2.22 — unchanged.
+
+Save-time:
+- `DictionaryStore.shorterExactPhrases(for:)` — every proper shorter prefix that already has an exact 詞 (user or stock).
+- Add Phrase UI (`AddPhrasePanel`): on auto-code, manual code edit, and after save, show a short note e.g. `較短碼已有詞：5883→中等／責令。打字會穿過它們到本詞（正常，可儲存）。`
+- Not an error — save always allowed; in-memory exact/userExact + prefixIndex still update immediately on save.
+- Auto-code path runs the same check on the generated code.
+
+Install path (ONLY): `~/Library/Input Methods/Ckcsys.app`
+No GitHub push/merge/release.
+
+Retest: Add Phrase → 輸入法 (or code 58834) → note lists 5883→中等／責令; save OK; numpad `58834` still composes through 5883 to 輸入法.
+
+---
+
+# Ckcsys macOS IMK — STATUS
+
 Time: 2026-10-27 12:55 Asia/Hong_Kong (UTC+8)
 Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
 
