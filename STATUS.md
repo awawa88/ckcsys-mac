@@ -1,5 +1,31 @@
 # Ckcsys macOS IMK — STATUS
 
+Time: 2026-10-27 12:15 Asia/Hong_Kong (UTC+8)
+Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
+
+## Local 0.2.18 (build 20) — 聯想 after any single 字 + 選詞 to pick
+
+Keeps 0.2.17 inactive-digit passthrough. Adds phrase guessing for **every** committed single character (習 is only the acceptance example — no hardcode).
+
+Behavior:
+1. After any 字 commit → CandidateWindow shows lexicon phrases that **start with that character** (`DictionaryStore.phrasesStarting`, cht_cimb / user phrases, pd-ranked, cap 90).
+2. Digits without 選詞 start a **fresh** CKC code (guess list dismissed; never steals 1–9).
+3. 選詞 (T / × by DigitSource) **arms** association → then 1–9 / Space pick a phrase; chrome shows `字 **`.
+4. Esc / Backspace dismisses guesses. Mouse click still an explicit pick.
+
+Retest:
+- Commit 習 → see 習慣/習俗/… → press T or × → 1 commits 習慣.
+- Commit 習 → without T/× type digits → new code composes (no forced phrase pick).
+- Same for other 字 (的/我/…).
+- Inactive digit row still types ASCII 0–9 (0.2.17).
+
+Install path (ONLY): `~/Library/Input Methods/Ckcsys.app`
+No GitHub push/merge/release.
+
+---
+
+# Ckcsys macOS IMK — STATUS
+
 Time: 2026-10-27 12:10 Asia/Hong_Kong (UTC+8)
 Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
 

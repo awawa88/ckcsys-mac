@@ -12,6 +12,12 @@ final class DictionaryStore {
     private var prefixIndex: [String: [String]] = [:]
     /// Cap prefix-expansion candidates so UI stays snappy on short codes.
     private let prefixResultCap = 120
+    /// Cap phrases shown after committing a single 字 (聯想 / association).
+    private let associationCap = 90
+    /// firstChar → phrases starting with that char (pd-desc, capped). Built at load.
+    private var phrasesByFirstChar: [String: [String]] = [:]
+    /// Accumulator during table load: firstChar → [(pd, phrase)].
+    private var associationAcc: [String: [(Int, String)]] = [:]
     /// User phrases only (also merged into exact with priority).
     private(set) var userExact: [String: [String]] = [:]
     /// Character → primary full code (from zimb; non-简码, prefer 4-digit, last xh on ties).
@@ -76,6 +82,8 @@ final class DictionaryStore {
         prefixIndex.removeAll()
         userExact.removeAll()
         charPrimaryCode.removeAll()
+        phrasesByFirstChar.removeAll()
+        associationAcc.removeAll()
         systemEntryCount = 0
         userEntryCount = 0
         sourceDescription = "unloaded"
@@ -117,8 +125,10 @@ final class DictionaryStore {
         if loaded == 0 {
             addSystem("0307", "我")
             addSystem("289449", "縱橫")
+            accumulateAssociation(word: "縱橫", pd: 1)
             addSystem("0", "的")
             addSystem("0", "香港")
+            accumulateAssociation(word: "香港", pd: 1)
             addSystem("1", "要")
             addSystem("6", "是")
             addSystem("9", "小")
@@ -142,7 +152,8 @@ final class DictionaryStore {
         }
         loadPunctuationTable()
         rebuildPrefixIndex()
-        NSLog("[CKC] Dictionary loaded: %@ punct=%d", sourceDescription, punctuationList.count)
+        rebuildAssociationIndex()
+        NSLog("[CKC] Dictionary loaded: %@ punct=%d assocChars=%d", sourceDescription, punctuationList.count, phrasesByFirstChar.count)
         appendLog(String(format: "Dictionary loaded punct=%d desc=%@", punctuationList.count, sourceDescription))
     }
 
@@ -162,6 +173,46 @@ final class DictionaryStore {
         for (p, keys) in buckets {
             prefixIndex[p] = keys.sorted()
         }
+    }
+
+    private func accumulateAssociation(word: String, pd: Int) {
+        guard word.count >= 2, let ch = word.first else { return }
+        let key = String(ch)
+        associationAcc[key, default: []].append((pd, word))
+    }
+
+    /// Build first-character → common phrases (聯想). User phrases first (highest pd), then pd desc.
+    private func rebuildAssociationIndex() {
+        var merged = associationAcc
+        for (_, words) in userExact {
+            for w in words where w.count >= 2 {
+                guard let ch = w.first else { continue }
+                merged[String(ch), default: []].append((Int.max / 2, w))
+            }
+        }
+        phrasesByFirstChar.removeAll(keepingCapacity: true)
+        for (key, pairs) in merged {
+            var seen = Set<String>()
+            var out: [String] = []
+            for (_, w) in pairs.sorted(by: { $0.0 > $1.0 }) {
+                if seen.insert(w).inserted {
+                    out.append(w)
+                    if out.count >= associationCap { break }
+                }
+            }
+            if !out.isEmpty { phrasesByFirstChar[key] = out }
+        }
+        associationAcc.removeAll(keepingCapacity: true)
+        NSLog("[CKC] Association index first-chars=%d cap=%d", phrasesByFirstChar.count, associationCap)
+    }
+
+    /// Lexicon phrases that start with the given character (any committed 字, not a hardcode).
+    func phrasesStarting(with character: String, limit: Int? = nil) -> [String] {
+        guard let ch = character.first else { return [] }
+        let all = phrasesByFirstChar[String(ch)] ?? []
+        let lim = limit ?? associationCap
+        if lim >= all.count { return all }
+        return Array(all.prefix(lim))
     }
 
     /// Prefer known Windows exports: zimb (singles) before cimb (phrases).
@@ -244,7 +295,16 @@ final class DictionaryStore {
             let word = cols[wordIdx].trimmingCharacters(in: .whitespaces)
             guard !code.isEmpty, !word.isEmpty, code.allSatisfy({ $0.isNumber }) else { continue }
 
+            let pd: Int
+            if cols.count > 2, let v = Int(cols[2].trimmingCharacters(in: .whitespaces)) {
+                pd = v
+            } else {
+                pd = 0
+            }
             addSystem(code, word)
+            if word.count >= 2 {
+                accumulateAssociation(word: word, pd: pd)
+            }
             n += 1
 
             if buildCharIndex, word.count == 1 {
@@ -337,6 +397,7 @@ final class DictionaryStore {
             let word = parts[1]
             guard code.allSatisfy({ $0.isNumber }) else { continue }
             addSystem(code, word)
+            if word.count >= 2 { accumulateAssociation(word: word, pd: 0) }
             n += 1
         }
         NSLog("[CKC] Loaded %d .cin chardef rows from %@", n, url.lastPathComponent)
@@ -380,6 +441,15 @@ final class DictionaryStore {
         }
         addUser(code, phrase)
         if let err = persistUserPhrases() { return err }
+        // Association: put new user phrase at front for its first 字
+        if phrase.count >= 2, let ch = phrase.first {
+            let key = String(ch)
+            var list = phrasesByFirstChar[key] ?? []
+            if let idx = list.firstIndex(of: phrase) { list.remove(at: idx) }
+            list.insert(phrase, at: 0)
+            if list.count > associationCap { list = Array(list.prefix(associationCap)) }
+            phrasesByFirstChar[key] = list
+        }
         // Cheap incremental prefix index update for this code
         let chars = Array(code)
         for i in 1...chars.count {

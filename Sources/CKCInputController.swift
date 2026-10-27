@@ -5,6 +5,7 @@ import Carbon.HIToolbox
 /// CKC / Ckcsys IMK controller.
 /// Digit entry builds the composition code (max 6). Two-column CandidateWindow: chars | phrases.
 /// T/* = 詞 then 1–9 pick; Y// = 字 then 1–9 pick; −/= page; Space commit.
+/// After committing any single 字: show 聯想 phrases starting with that char; digit picks need 選詞 first.
 /// Auto 選詞/選字 (marked **/ *) when dead-end (!hasLongerCode) OR exact-詞 with no 字 left
 /// (e.g. 06177 → ** then 1 → 自己) even if longer keys exist. Else keep appending.
 /// DigitSource flips only via Caps Lock / StatusConsole (never on digit keys).
@@ -19,6 +20,12 @@ class CKCInputController: IMKInputController {
     private var lookKind: DictionaryStore.CandidateKind = .all  // .all = both columns
     private var selectedIndex: Int = 0
     private weak var currentClient: AnyObject?
+
+    /// After committing a single 字: lexicon phrases that start with that character (聯想).
+    /// Shown automatically; digit picks require 選詞 (T / ×) first — otherwise digits start a fresh code.
+    private var associationSeed: String = ""
+    private var associationPhrases: [String] = []
+    private var associationPickEnabled: Bool = false
 
     /// Windows CKC: idle keypad "-" (標點符號鍵) opens 標點 picker; digits then commit.
     private var punctMode: Bool = false
@@ -163,6 +170,7 @@ class CKCInputController: IMKInputController {
             if self.punctMode {
                 self.commitPunct(text, client: self.currentClient)
             } else {
+                // Mouse is an explicit pick — allowed even before 選詞 in association mode.
                 self.commit(text, client: self.currentClient)
             }
         }
@@ -177,6 +185,8 @@ class CKCInputController: IMKInputController {
             showPunctCandidates(client: sender)
         } else if !buffer.isEmpty {
             updateUI(client: sender)
+        } else if hasAssociation {
+            showAssociationWindow(client: sender)
         }
     }
 
@@ -520,8 +530,8 @@ class CKCInputController: IMKInputController {
 
         // End keys: T / * = phrases; Y / bare / = characters (when composing).
         // Shift+/ is 萬能鍵 (handled above), not 字-end.
-        let isPhraseEnd =
-            (composing && lower == "t" && flags.isEmpty) ||
+        let isPhraseEndKey =
+            (lower == "t" && flags.isEmpty) ||
             keyCode == kVK_ANSI_KeypadMultiply ||
             chars == "*" || typedChars == "*"
         let isBareSlash =
@@ -533,7 +543,19 @@ class CKCInputController: IMKInputController {
             keyCode == kVK_ANSI_KeypadDivide ||
             isBareSlash
 
-        if composing && isPhraseEnd {
+        // Association 選詞: idle after 字 commit — T / × arms digit picks (does not steal digits before this).
+        if !composing && !punctMode && hasAssociation && isPhraseEndKey && !blocked {
+            associationPickEnabled = true
+            lookKind = .phrases
+            phraseCandidates = associationPhrases
+            charCandidates = []
+            selectedIndex = 0
+            showAssociationWindow(client: sender)
+            ckcLog("association 選詞 armed seed='\(associationSeed)' phrases=\(associationPhrases.count)")
+            return true
+        }
+
+        if composing && isPhraseEndKey {
             // T / keypad * → 詞 column only
             lookKind = .phrases
             selectedIndex = 0
@@ -550,10 +572,14 @@ class CKCInputController: IMKInputController {
             return true
         }
 
-        // Esc → clear both 標點 and composition
+        // Esc → clear 標點, composition, or association guesses
         if keyCode == kVK_Escape {
             if punctMode || composing {
                 clearComposition(client: sender)
+                return true
+            }
+            if hasAssociation {
+                clearAssociation()
                 return true
             }
             return false
@@ -716,8 +742,21 @@ class CKCInputController: IMKInputController {
             }
         }
 
-        // Space / Return → commit highlighted
+        // Space / Return → commit highlighted (association: only after 選詞)
         if keyCode == kVK_Space || keyCode == kVK_Return || keyCode == kVK_ANSI_KeypadEnter {
+            if hasAssociation && !composing {
+                if associationPickEnabled {
+                    if let pick = CandidateWindow.shared.selectedCandidate
+                        ?? phraseCandidates.first {
+                        commit(pick, client: sender)
+                        return true
+                    }
+                    return true
+                }
+                // Without 選詞, Space/Return are normal — dismiss guesses, do not force a phrase.
+                clearAssociation()
+                return false
+            }
             if let pick = CandidateWindow.shared.selectedCandidate
                 ?? charCandidates.first
                 ?? phraseCandidates.first {
@@ -747,6 +786,10 @@ class CKCInputController: IMKInputController {
                 updateUI(client: sender)
                 return true
             }
+            if hasAssociation {
+                clearAssociation()
+                return true
+            }
             return false
         }
 
@@ -767,6 +810,22 @@ class CKCInputController: IMKInputController {
             if digitInfo.source != StatusConsole.shared.digitSource {
                 ckcLog("digit \(digit) IGNORE inactive (passthrough) src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue) composing=\(composing ? 1 : 0) punct=\(punctMode ? 1 : 0)")
                 return false
+            }
+
+            // Association after 字 commit: digits pick ONLY when 選詞 armed; else start a fresh code.
+            if hasAssociation && buffer.isEmpty && !punctMode && flags.isEmpty {
+                if associationPickEnabled && digit >= 1 && digit <= 9 {
+                    syncAssociationWindow(near: sender)
+                    if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
+                        ckcLog("association pick digit=\(digit) → '\(text)' seed='\(associationSeed)'")
+                        commit(text, client: sender)
+                        return true
+                    }
+                    return true
+                }
+                ckcLog("association dismiss → fresh compose digit=\(digit) seed='\(associationSeed)' armed=\(associationPickEnabled ? 1 : 0)")
+                clearAssociation()
+                // fall through: digit starts a new CKC code
             }
 
             if digit >= 1 && digit <= 9 && hasCandidates && flags.isEmpty {
@@ -1012,7 +1071,11 @@ class CKCInputController: IMKInputController {
 
     private func updateCandidateWindow(client: Any?) {
         if buffer.isEmpty {
-            CandidateWindow.shared.hide()
+            if hasAssociation {
+                showAssociationWindow(client: client)
+            } else {
+                CandidateWindow.shared.hide()
+            }
             return
         }
         let mode: CandidateDisplayMode
@@ -1058,8 +1121,15 @@ class CKCInputController: IMKInputController {
         phraseCandidates = []
         lookKind = .all
         selectedIndex = 0
+        // Lexicon association uses Traditional form (same as candidate lists).
+        let traditional = text
+        clearAssociation(hideWindow: false)
         CandidateWindow.shared.hide()
         NSLog("[CKC] committed %@ (outputMode=%@)", outputText, StatusConsole.shared.outputMode.rawValue)
+        // Any single 字 → show common phrases starting with that character (習 is just an example).
+        if traditional.count == 1 {
+            beginAssociation(for: traditional, client: client)
+        }
     }
 
     private func clearComposition(client: Any?) {
@@ -1070,10 +1140,73 @@ class CKCInputController: IMKInputController {
         phraseCandidates = []
         lookKind = .all
         selectedIndex = 0
-        CandidateWindow.shared.hide()
+        clearAssociation()
         if let client = (client as? IMKTextInput) ?? (currentClient as? IMKTextInput) {
             client.setMarkedText("", selectionRange: NSRange(location: 0, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
         }
+    }
+
+    // MARK: - Association (聯想 after single 字)
+
+    private var hasAssociation: Bool { !associationPhrases.isEmpty }
+
+    private func clearAssociation(hideWindow: Bool = true) {
+        associationSeed = ""
+        associationPhrases = []
+        associationPickEnabled = false
+        if buffer.isEmpty {
+            // Avoid stale lookKind=.phrases stealing the next digit as a pick.
+            if hideWindow {
+                phraseCandidates = []
+                charCandidates = []
+                lookKind = .all
+                selectedIndex = 0
+                CandidateWindow.shared.hide()
+            }
+        }
+    }
+
+    private func beginAssociation(for character: String, client: Any?) {
+        guard character.count == 1 else {
+            clearAssociation()
+            return
+        }
+        let phrases = DictionaryStore.shared.phrasesStarting(with: character)
+        guard !phrases.isEmpty else {
+            clearAssociation()
+            ckcLog("association none for '\(character)'")
+            return
+        }
+        associationSeed = character
+        associationPhrases = phrases
+        associationPickEnabled = false
+        lookKind = .phrases
+        charCandidates = []
+        phraseCandidates = phrases
+        selectedIndex = 0
+        showAssociationWindow(client: client)
+        ckcLog("association show seed='\(character)' phrases=\(phrases.count) (pick after 選詞 only)")
+    }
+
+    private func showAssociationWindow(client: Any?) {
+        syncAssociationWindow(near: client)
+    }
+
+    private func syncAssociationWindow(near client: Any?) {
+        guard hasAssociation else { return }
+        var chrome = associationSeed
+        if associationPickEnabled { chrome += " **" }
+        CandidateWindow.shared.show(
+            composition: chrome,
+            chars: [],
+            phrases: associationPhrases,
+            mode: .phrases,
+            focus: .phrases,
+            digitSource: StatusConsole.shared.digitSource,
+            near: (client as AnyObject?) ?? currentClient
+        )
+        phraseCandidates = associationPhrases
+        selectedIndex = CandidateWindow.shared.globalSelectedIndex
     }
 
 
@@ -1084,6 +1217,7 @@ class CKCInputController: IMKInputController {
         punctMode = true
         punctPageIndex = 0
         buffer = ""
+        clearAssociation(hideWindow: false)
         lookKind = .characters
         charCandidates = []
         phraseCandidates = []
