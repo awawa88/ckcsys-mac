@@ -5,7 +5,8 @@ import Carbon.HIToolbox
 /// CKC / Ckcsys IMK controller.
 /// Digit entry builds the composition code (max 6). Two-column CandidateWindow: chars | phrases.
 /// T/* = 詞 then 1–9 pick; Y// = 字 then 1–9 pick; −/= page; Space commit.
-/// DigitSource (.numpad default): only that source's digits enter codes.
+/// DigitSource: Caps Lock / console toggle sets 標點 key + column headers (÷/× vs Y/T).
+/// Digits from either numpad or number-row compose; arrival auto-switches digitSource.
 @objc(CKCInputController)
 class CKCInputController: IMKInputController {
     private var buffer: String = ""
@@ -87,12 +88,22 @@ class CKCInputController: IMKInputController {
             }
         }
         CandidateWindow.shared.applyDigitModeLabels(digitSource: StatusConsole.shared.digitSource)
-        ckcLog("activateServer dict=\(DictionaryStore.shared.sourceDescription) digitSource=\(StatusConsole.shared.digitSource.rawValue) outputMode=\(StatusConsole.shared.outputMode.rawValue) capsOn=\(lastCapsLockOn == true ? 1 : 0)")
+        let clientId = clientBundleId(sender)
+        ckcLog("activateServer client=\(clientId) dict=\(DictionaryStore.shared.sourceDescription) digitSource=\(StatusConsole.shared.digitSource.rawValue) outputMode=\(StatusConsole.shared.outputMode.rawValue) capsOn=\(lastCapsLockOn == true ? 1 : 0) buffer='\(buffer)' punct=\(punctMode ? 1 : 0)")
+        // Notes/Messages churn activate/deactivate; restore marked text + panel if we still have state.
+        if punctMode {
+            showPunctCandidates(client: sender)
+        } else if !buffer.isEmpty {
+            updateUI(client: sender)
+        }
     }
 
     override func deactivateServer(_ sender: Any!) {
-        exitPunctMode()
-        clearComposition(client: sender)
+        // Do NOT clearComposition here — focus churn in Notes/iMessage would wipe digits
+        // already consumed (return true), which looks like "nothing happens".
+        let clientId = clientBundleId(sender)
+        ckcLog("deactivateServer client=\(clientId) buffer='\(buffer)' punct=\(punctMode ? 1 : 0)")
+        CandidateWindow.shared.hide()
         CandidateWindow.shared.onCandidateClicked = nil
         StatusConsole.shared.hide()
         super.deactivateServer(sender)
@@ -160,6 +171,12 @@ class CKCInputController: IMKInputController {
             updateUI(client: currentClient)
         }
         NSLog("[CKC] dictionary reloaded: %@", DictionaryStore.shared.sourceDescription)
+    }
+
+    /// Short client id for Notes/Messages diagnose (IMKTextInput.bundleIdentifier).
+    private func clientBundleId(_ client: Any?) -> String {
+        let input = (client as? IMKTextInput) ?? (currentClient as? IMKTextInput)
+        return input?.bundleIdentifier() ?? "?"
     }
 
     /// Append one line to /tmp/ckc-ime.log (unified log often redacts NSLog as <private>).
@@ -641,10 +658,9 @@ class CKCInputController: IMKInputController {
         }
 
         // Digits: after Y// → pick 字; after T/* → pick 詞;
-        // at 6 digits → 1–9 pick 詞 directly (no T/* needed); else compose from active DigitSource.
+        // at 6 digits → 1–9 pick 詞 directly (no T/* needed); else compose from either DigitSource.
         if let digitInfo = classifyDigit(keyCode: keyCode, characters: chars, rawFlags: rawFlags) {
             let digit = digitInfo.value
-            let fromActiveSource = digitInfo.source == StatusConsole.shared.digitSource
             let pickModifiers = flags.contains(.option) || flags.contains(.control)
             let atMaxCode = buffer.count >= 6
 
@@ -693,9 +709,14 @@ class CKCInputController: IMKInputController {
                 return true
             }
 
-            // Composition digit — only from active source, no modifiers; never a 7th digit.
-            // If 標點 was somehow still open, dismiss before appending.
-            if fromActiveSource && flags.isEmpty {
+            // Composition digit — either numpad or number-row when no modifiers; never a 7th digit.
+            // Auto-switch digitSource so column headers (÷/× vs Y/T) match the keys in use.
+            // Caps Lock / console toggle remain for intentional mode switch (標點 / headers).
+            if flags.isEmpty {
+                if digitInfo.source != StatusConsole.shared.digitSource {
+                    StatusConsole.shared.setDigitSource(digitInfo.source)
+                    ckcLog("digitSource auto-switch → \(digitInfo.source.rawValue)")
+                }
                 if punctMode {
                     exitPunctMode()
                     ckcLog("digit compose dismissed punct buffer=\(buffer)")
@@ -716,13 +737,14 @@ class CKCInputController: IMKInputController {
                     lookKind = .phrases
                     CandidateWindow.shared.focusColumn(.phrases)
                 }
-                ckcLog("digit compose '\(buffer)' src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue) chars=\(charCandidates.count) phrases=\(phraseCandidates.count)")
+                let clientId = clientBundleId(sender)
+                ckcLog("digit compose '\(buffer)' src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue) client=\(clientId) chars=\(charCandidates.count) phrases=\(phraseCandidates.count)")
                 updateUI(client: sender)
                 return true
             }
 
-            // Digit from the OTHER source → pass through as English
-            ckcLog("digit \(digit) REJECTED src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue) flags=0x\(String(flags.rawValue, radix: 16))")
+            // Modifiers block compose → pass through (Shift etc.); source mismatch no longer rejects.
+            ckcLog("digit \(digit) REJECTED (modifiers) src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue) flags=0x\(String(flags.rawValue, radix: 16))")
             return false
         }
 
