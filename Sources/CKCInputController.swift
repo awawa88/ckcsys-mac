@@ -5,9 +5,9 @@ import Carbon.HIToolbox
 /// CKC / Ckcsys IMK controller.
 /// Digit entry builds the composition code (max 6). Two-column CandidateWindow: chars | phrases.
 /// T/* = 詞 then 1–9 pick; Y// = 字 then 1–9 pick; −/= page; Space commit.
-/// If buffer has no longer lexicon codes, the next digit auto-enters 選詞 and picks that phrase.
-/// DigitSource: Caps Lock / console toggle sets 標點 key + column headers (÷/× vs Y/T).
-/// Digits from either numpad or number-row compose; arrival auto-switches digitSource.
+/// If buffer has no longer lexicon codes, auto-enter 選詞/選字 (marked **/ *) and digits pick without T/Y.
+/// Longer keys still exist → keep appending. DigitSource flips only via Caps Lock / StatusConsole (never on digit keys).
+/// Digits from either numpad or number-row always compose/select regardless of active DigitSource.
 @objc(CKCInputController)
 class CKCInputController: IMKInputController {
     private var buffer: String = ""
@@ -796,13 +796,10 @@ class CKCInputController: IMKInputController {
             }
 
             // Composition digit — either numpad or number-row when no modifiers; never a 7th digit.
-            // Auto-switch digitSource so column headers (÷/× vs Y/T) match the keys in use.
-            // Caps Lock / console toggle remain for intentional mode switch (標點 / headers).
+            // Keep DigitSource sticky: do not auto-flip mode when the digit arrives from the other
+            // physical row. Caps Lock / StatusConsole toggle remain the only intentional switches
+            // (標點 key + column headers ÷/× vs Y/T).
             if flags.isEmpty {
-                if digitInfo.source != StatusConsole.shared.digitSource {
-                    StatusConsole.shared.setDigitSource(digitInfo.source)
-                    ckcLog("digitSource auto-switch → \(digitInfo.source.rawValue)")
-                }
                 if punctMode {
                     exitPunctMode()
                     ckcLog("digit compose dismissed punct buffer=\(buffer)")
@@ -812,32 +809,51 @@ class CKCInputController: IMKInputController {
                     ckcLog("digit \(digit) atMaxCode swallowed source=\(digitInfo.source.rawValue)")
                     return true
                 }
-                // No further code extensions for this buffer → next digit is 選詞 picker
-                // (same as pressing T/* then the digit). Applies at any length < 6.
+                // No longer lexicon keys for this buffer → digit is 選詞/選字 picker
+                // (same as T/* or Y// then the digit). If longer keys exist, fall through and append.
+                // Applies at any length < 6. Prefer 選詞 when phrases exist; else 選字.
                 if !buffer.isEmpty
                     && !buffer.contains("?")
                     && !DictionaryStore.shared.hasLongerCode(for: buffer) {
                     ckcLog("auto-phrase-no-extension buffer=\(buffer) digit=\(digit)")
-                    lookKind = .phrases
                     selectedIndex = 0
+                    // Populate both lists first, then lock column (phrases preferred).
+                    let prior = lookKind
+                    lookKind = .all
                     refreshCandidates()
+                    if !phraseCandidates.isEmpty {
+                        lookKind = .phrases
+                    } else if !charCandidates.isEmpty {
+                        lookKind = .characters
+                    } else {
+                        lookKind = prior == .characters ? .characters : .phrases
+                    }
+                    refreshCandidates()
+                    // Synchronous show so select*OnPage sees fresh candidates (updateUI defers).
                     CandidateWindow.shared.show(
                         composition: buffer,
                         chars: charCandidates,
                         phrases: phraseCandidates,
-                        mode: .phrases,
-                        focus: .phrases,
+                        mode: lookKind == .characters ? .characters : .phrases,
+                        focus: lookKind == .characters ? .characters : .phrases,
                         digitSource: StatusConsole.shared.digitSource,
                         near: (sender as AnyObject?) ?? currentClient
                     )
                     updateMarked(client: sender)
                     if digit >= 1 && digit <= 9 {
-                        if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
-                            commit(text, client: sender)
-                            return true
+                        if lookKind == .phrases {
+                            if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
+                                commit(text, client: sender)
+                                return true
+                            }
+                        } else if lookKind == .characters {
+                            if let text = CandidateWindow.shared.selectCharOnPage(digit) {
+                                commit(text, client: sender)
+                                return true
+                            }
                         }
                     }
-                    // digit 0 or out-of-range: stay in phrase-select mode (marked **)
+                    // digit 0 or out-of-range: stay in select mode (marked * / **)
                     ensureStatusConsoleVisible(near: sender)
                     updateUI(client: sender)
                     return true
@@ -848,14 +864,27 @@ class CKCInputController: IMKInputController {
                 buffer.append(Character(String(digit)))
                 selectedIndex = 0
                 refreshCandidates()
-                // Auto-focus 詞 when code reaches 6 digits and phrases exist
-                if buffer.count >= 6 && !phraseCandidates.isEmpty {
+                // Dead-end (no longer lexicon keys): auto-enter 選詞/選字 immediately
+                // so marked text shows ** / * without waiting for T/Y or another digit.
+                // Longer keys still exist → stay in .all and keep composing.
+                if !buffer.contains("?")
+                    && !DictionaryStore.shared.hasLongerCode(for: buffer)
+                    && (!phraseCandidates.isEmpty || !charCandidates.isEmpty) {
+                    if !phraseCandidates.isEmpty {
+                        lookKind = .phrases
+                    } else {
+                        lookKind = .characters
+                    }
+                    refreshCandidates()
+                    ckcLog("auto-select-enter buffer=\(buffer) mode=\(lookKind == .phrases ? "phrases" : "characters") chars=\(charCandidates.count) phrases=\(phraseCandidates.count)")
+                } else if buffer.count >= 6 && !phraseCandidates.isEmpty {
+                    // Full 6-digit with phrases: focus 詞 (Windows-style)
                     lookKind = .phrases
                     CandidateWindow.shared.focusColumn(.phrases)
                 }
                 ensureStatusConsoleVisible(near: sender)
                 let clientId = clientBundleId(sender)
-                ckcLog("digit compose '\(buffer)' src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue) client=\(clientId) chars=\(charCandidates.count) phrases=\(phraseCandidates.count)")
+                ckcLog("digit compose '\(buffer)' src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue) client=\(clientId) chars=\(charCandidates.count) phrases=\(phraseCandidates.count) look=\(String(describing: lookKind))")
                 updateUI(client: sender)
                 return true
             }

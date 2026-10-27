@@ -1,5 +1,37 @@
 # Ckcsys macOS IMK — STATUS
 
+Time: 2026-10-27 11:52 Asia/Hong_Kong (UTC+8)
+Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
+
+## Local 0.2.14 (build 16) — sticky DigitSource + auto 選詞/選字 on dead-end codes
+
+Two fixes in one local install (not pushed):
+
+### A) DigitSource no auto-switch (either direction)
+Typing a digit from the other physical row must NOT flip numpad ↔ number-row / column headers.
+Both sources still compose and select. Mode changes only via StatusConsole (or Caps Lock).
+- Removed `setDigitSource(digitInfo.source)` on composition digits.
+
+### B) Auto ` **` / ` *` when no longer lexicon codes (`!hasLongerCode`)
+Gate (Andrew-confirmed): only when **no** longer lexicon key exists for the current buffer prefix.
+If a longer key still exists → keep appending digits (do **not** auto-enter 選字/選詞).
+
+Behavior:
+1. After a digit append, if `!hasLongerCode(buffer)` and candidates exist → immediately set lookKind to 選詞 (phrases preferred) or 選字, so marked text shows ` **` / ` *` without waiting for T/×/Y or another digit.
+2. While in that mode, digit 1–9 picks (same as after T/* or Y//). Digit 0 stays in select mode.
+3. Note: `06177` still has longer keys (`061770`/`061771`/`061777`), so it keeps appending — not a dead-end. Dead-end example: `00259` (phrases 像素/偏東/季績) → auto ` **`, then `1` commits 像素.
+
+Retest:
+1. Numpad mode (÷/×): type a number-row digit → mode stays numpad; digit composes. Opposite stays number-row.
+2. Type `00259` → marked becomes `00259 **` automatically; press `1` → 像素.
+3. Type `06177` then `1` → appends to `061771` (longer keys exist); not auto-phrase.
+
+Install path (ONLY): `~/Library/Input Methods/Ckcsys.app`
+No GitHub push/merge/release.
+
+---
+
+# Prior STATUS
 Time: 2026-10-27 11:30 Asia/Hong_Kong (UTC+8)
 Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
 

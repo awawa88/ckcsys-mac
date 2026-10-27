@@ -491,6 +491,19 @@ final class DictionaryStore {
         return keys.contains { $0.count > code.count }
     }
 
+    /// True when `code` itself has at least one multi-character (詞) entry in user or system lexicon.
+    /// Used so digits can auto-選詞 (e.g. 06177 → 自己) even if longer keys also exist.
+    func hasExactPhrase(for code: String) -> Bool {
+        guard !code.isEmpty else { return false }
+        if let userHits = userExact[code], userHits.contains(where: { $0.count >= 2 }) {
+            return true
+        }
+        if let sysHits = exact[code], sysHits.contains(where: { $0.count >= 2 }) {
+            return true
+        }
+        return false
+    }
+
     /// Candidates: user phrases first, then exact system, then prefix matches.
     func candidates(for code: String, kind: CandidateKind = .all) -> [String] {
         guard !code.isEmpty else { return [] }
