@@ -5,9 +5,9 @@ import Carbon.HIToolbox
 /// CKC / Ckcsys IMK controller.
 /// Digit entry builds the composition code (max 6). Two-column CandidateWindow: chars | phrases.
 /// T/* = 詞 then 1–9 pick; Y// = 字 then 1–9 pick; −/= page; Space commit.
-/// If buffer has no longer lexicon codes, auto-enter 選詞/選字 (marked **/ *) and digits pick without T/Y.
-/// Longer keys still exist → keep appending. DigitSource flips only via Caps Lock / StatusConsole (never on digit keys).
-/// Digits from either numpad or number-row always compose/select regardless of active DigitSource.
+/// Auto 選詞/選字 (marked **/ *) when dead-end (!hasLongerCode) OR exact-詞 with no 字 left
+/// (e.g. 06177 → ** then 1 → 自己) even if longer keys exist. Else keep appending.
+/// DigitSource flips only via Caps Lock / StatusConsole (never on digit keys).
 @objc(CKCInputController)
 class CKCInputController: IMKInputController {
     private var buffer: String = ""
@@ -754,22 +754,25 @@ class CKCInputController: IMKInputController {
                 // Full 6-digit code: 1–9 commits phrase (Windows-style; no T/* required)
                 if atMaxCode && !phraseCandidates.isEmpty && lookKind != .characters {
                     lookKind = .phrases
+                    syncCandidateWindow(near: sender)
                     if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
                         commit(text, client: sender)
                         return true
                     }
                     return true
                 }
-                // Phrase filter (T / *): 1–9 commits phrase
+                // Phrase filter (T / * / auto-選詞): 1–9 commits phrase — never only toggle **
                 if lookKind == .phrases {
+                    syncCandidateWindow(near: sender)
                     if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
                         commit(text, client: sender)
                         return true
                     }
                     return true
                 }
-                // Char filter (Y / /): 1–9 commits character
+                // Char filter (Y / / / auto-選字): 1–9 commits character
                 if lookKind == .characters {
+                    syncCandidateWindow(near: sender)
                     if let text = CandidateWindow.shared.selectCharOnPage(digit) {
                         commit(text, client: sender)
                         return true
@@ -778,6 +781,7 @@ class CKCInputController: IMKInputController {
                 }
                 // At 6 digits with only chars (no phrases): allow char pick
                 if atMaxCode && !charCandidates.isEmpty && phraseCandidates.isEmpty {
+                    syncCandidateWindow(near: sender)
                     if let text = CandidateWindow.shared.selectCharOnPage(digit) {
                         commit(text, client: sender)
                         return true
@@ -809,36 +813,15 @@ class CKCInputController: IMKInputController {
                     ckcLog("digit \(digit) atMaxCode swallowed source=\(digitInfo.source.rawValue)")
                     return true
                 }
-                // No longer lexicon keys for this buffer → digit is 選詞/選字 picker
-                // (same as T/* or Y// then the digit). If longer keys exist, fall through and append.
-                // Applies at any length < 6. Prefer 選詞 when phrases exist; else 選字.
-                if !buffer.isEmpty
-                    && !buffer.contains("?")
-                    && !DictionaryStore.shared.hasLongerCode(for: buffer) {
-                    ckcLog("auto-phrase-no-extension buffer=\(buffer) digit=\(digit)")
-                    selectedIndex = 0
-                    // Populate both lists first, then lock column (phrases preferred).
-                    let prior = lookKind
-                    lookKind = .all
-                    refreshCandidates()
-                    if !phraseCandidates.isEmpty {
-                        lookKind = .phrases
-                    } else if !charCandidates.isEmpty {
-                        lookKind = .characters
-                    } else {
-                        lookKind = prior == .characters ? .characters : .phrases
-                    }
-                    refreshCandidates()
-                    // Synchronous show so select*OnPage sees fresh candidates (updateUI defers).
-                    CandidateWindow.shared.show(
-                        composition: buffer,
-                        chars: charCandidates,
-                        phrases: phraseCandidates,
-                        mode: lookKind == .characters ? .characters : .phrases,
-                        focus: lookKind == .characters ? .characters : .phrases,
-                        digitSource: StatusConsole.shared.digitSource,
-                        near: (sender as AnyObject?) ?? currentClient
-                    )
+                // Auto-select gate: dead-end OR exact-詞 with no 字 left (06177 → 自己).
+                // Same keystroke must enter mode AND pick — never leave user with only **.
+                // Refresh both columns so the gate sees 字/詞 counts correctly.
+                lookKind = .all
+                refreshCandidates()
+                if shouldAutoSelectMode() {
+                    ckcLog("auto-phrase-no-extension buffer=\(buffer) digit=\(digit) exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0)")
+                    enterAutoSelectMode()
+                    syncCandidateWindow(near: sender)
                     updateMarked(client: sender)
                     if digit >= 1 && digit <= 9 {
                         if lookKind == .phrases {
@@ -863,20 +846,13 @@ class CKCInputController: IMKInputController {
                 }
                 buffer.append(Character(String(digit)))
                 selectedIndex = 0
+                lookKind = .all
                 refreshCandidates()
-                // Dead-end (no longer lexicon keys): auto-enter 選詞/選字 immediately
-                // so marked text shows ** / * without waiting for T/Y or another digit.
-                // Longer keys still exist → stay in .all and keep composing.
-                if !buffer.contains("?")
-                    && !DictionaryStore.shared.hasLongerCode(for: buffer)
-                    && (!phraseCandidates.isEmpty || !charCandidates.isEmpty) {
-                    if !phraseCandidates.isEmpty {
-                        lookKind = .phrases
-                    } else {
-                        lookKind = .characters
-                    }
-                    refreshCandidates()
-                    ckcLog("auto-select-enter buffer=\(buffer) mode=\(lookKind == .phrases ? "phrases" : "characters") chars=\(charCandidates.count) phrases=\(phraseCandidates.count)")
+                // Auto-enter 選詞/選字 immediately when gate matches (dead-end or exact-詞
+                // with no 字 left, e.g. 06177 → marked "06177 **" without waiting for T/1).
+                if shouldAutoSelectMode() {
+                    enterAutoSelectMode()
+                    ckcLog("auto-select-enter buffer=\(buffer) mode=\(lookKind == .phrases ? "phrases" : "characters") chars=\(charCandidates.count) phrases=\(phraseCandidates.count) exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0)")
                 } else if buffer.count >= 6 && !phraseCandidates.isEmpty {
                     // Full 6-digit with phrases: focus 詞 (Windows-style)
                     lookKind = .phrases
@@ -912,6 +888,57 @@ class CKCInputController: IMKInputController {
     }
 
     // MARK: - Internals
+
+
+    /// Whether the current buffer should lock into 選詞/選字 without T/Y.
+    /// - No longer lexicon keys, or
+    /// - Exact 詞 code with zero 字 candidates left (e.g. 06177 → 自己) even if
+    ///   longer keys like 061771 exist — digits then pick, not append.
+    private func shouldAutoSelectMode() -> Bool {
+        guard !buffer.isEmpty, !buffer.contains("?") else { return false }
+        if !DictionaryStore.shared.hasLongerCode(for: buffer) {
+            return !phraseCandidates.isEmpty || !charCandidates.isEmpty
+        }
+        return DictionaryStore.shared.hasExactPhrase(for: buffer)
+            && charCandidates.isEmpty
+            && !phraseCandidates.isEmpty
+    }
+
+    /// Prefer 選詞 when phrases exist; else 選字. Assumes candidates already refreshed (.all).
+    private func enterAutoSelectMode() {
+        if !phraseCandidates.isEmpty {
+            lookKind = .phrases
+        } else if !charCandidates.isEmpty {
+            lookKind = .characters
+        } else {
+            lookKind = .phrases
+        }
+        selectedIndex = 0
+        refreshCandidates()
+    }
+
+    /// Push controller candidate lists into CandidateWindow synchronously (updateUI defers show).
+    private func syncCandidateWindow(near client: Any?) {
+        let mode: CandidateDisplayMode
+        let focus: CandidateColumn
+        switch lookKind {
+        case .characters:
+            mode = .characters; focus = .characters
+        case .phrases:
+            mode = .phrases; focus = .phrases
+        case .all:
+            mode = .both; focus = .characters
+        }
+        CandidateWindow.shared.show(
+            composition: buffer,
+            chars: charCandidates,
+            phrases: phraseCandidates,
+            mode: mode,
+            focus: lookKind == .all ? nil : focus,
+            digitSource: StatusConsole.shared.digitSource,
+            near: (client as AnyObject?) ?? currentClient
+        )
+    }
 
     private func refreshCandidates() {
         let useWild = buffer.contains("?")
