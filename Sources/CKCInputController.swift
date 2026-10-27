@@ -9,8 +9,8 @@ import Carbon.HIToolbox
 /// (e.g. 06177 → ** then 1 → 自己) even if longer keys exist. Else keep appending.
 /// DigitSource flips only via Caps Lock / StatusConsole (never on digit keys).
 /// Active DigitSource gates compose + candidate pick: numpad mode accepts only numpad digits;
-/// number-row mode accepts only number-row digits. Inactive-row digits never flip mode —
-/// pass through when idle; swallowed while composing/punct (safer than inserting into marked text).
+/// number-row mode accepts only number-row digits. Inactive-row digits never flip mode and
+/// always `return false` (unhandled) so they type as regular digits — idle, composing, or punct.
 @objc(CKCInputController)
 class CKCInputController: IMKInputController {
     private var buffer: String = ""
@@ -609,8 +609,9 @@ class CKCInputController: IMKInputController {
             if let digitInfo = classifyDigit(keyCode: keyCode, characters: chars, rawFlags: rawFlags), !blocked {
                 // Active DigitSource only — inactive row must not pick 標點 or flip mode.
                 if digitInfo.source != StatusConsole.shared.digitSource {
-                    ckcLog("digit \(digitInfo.value) IGNORE inactive (punct) src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue)")
-                    return true
+                    // Always pass through: inactive digits must type 0–9 into the app, never pick 標點.
+                    ckcLog("digit \(digitInfo.value) IGNORE inactive (passthrough/punct) src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue)")
+                    return false
                 }
                 // Pure punct mode: 1–9 (and 0) choose the mark — never wildcard-continue.
                 let d = digitInfo.value
@@ -760,14 +761,11 @@ class CKCInputController: IMKInputController {
 
             // Mode gate: only the active physical row feeds compose / candidate pick.
             // Never auto-switch DigitSource (sticky since 0.2.14/0.2.15).
-            // Idle → pass through so the app gets a normal typed digit;
-            // composing or punct → swallow (return true) so marked text is not polluted.
+            // Inactive-source digits always pass through (return false / unhandled) so they
+            // insert as regular 0–9 — including while composing or in 標點. Never append to
+            // the CKC buffer and never flip DigitSource.
             if digitInfo.source != StatusConsole.shared.digitSource {
-                let reason = (composing || punctMode) ? "swallow" : "passthrough"
-                ckcLog("digit \(digit) IGNORE inactive (\(reason)) src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue) composing=\(composing ? 1 : 0) punct=\(punctMode ? 1 : 0)")
-                if composing || punctMode {
-                    return true
-                }
+                ckcLog("digit \(digit) IGNORE inactive (passthrough) src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue) composing=\(composing ? 1 : 0) punct=\(punctMode ? 1 : 0)")
                 return false
             }
 

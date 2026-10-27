@@ -1,5 +1,29 @@
 # Ckcsys macOS IMK — STATUS
 
+Time: 2026-10-27 12:10 Asia/Hong_Kong (UTC+8)
+Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
+
+## Local 0.2.17 (build 19) — inactive digits always pass through
+
+Andrew: numpad feels locked in number-row mode. 0.2.16 swallowed inactive-row digits while composing/標點 (`return true`); idle only passed through.
+
+Change (`handle` DigitSource gate + punct inactive gate):
+- Inactive-source digits **always** `return false` / unhandled → type regular `0`–`9` into the app (prefer real pass-through over swallow, including while composing if IMK allows).
+- Still: no buffer append, no DigitSource flip, mode sticky (Caps Lock / StatusConsole only).
+- Active side unchanged: compose / auto-選詞 / picks as in 0.2.16.
+
+Retest:
+- Number-row mode: top-row composes; numpad types 0–9 into the text field (idle and while composing).
+- Numpad mode: pad composes; top-row types 0–9.
+- Mode sticky — inactive side never auto-switches DigitSource.
+
+Install path (ONLY): `~/Library/Input Methods/Ckcsys.app`
+No GitHub push/merge/release.
+
+---
+
+# Ckcsys macOS IMK — STATUS
+
 Time: 2026-10-27 12:05 Asia/Hong_Kong (UTC+8)
 Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
 
