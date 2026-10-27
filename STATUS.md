@@ -1,3 +1,37 @@
+## Local 0.2.27 (build 29) — StatusConsole follows system menu-bar font
+
+Ask (t260u/t261u/t262u): console chrome text should match / follow the macOS **system
+menu bar** font size (System Settings → Appearance / menu bar text size), not a
+hard-coded guess.
+
+Was: logo 11pt bold; 繁/簡 · digit source · 光/錨 at 10pt with `.mini` controls;
+default strip height 26. A frozen `static let` pointSize would not track later changes.
+
+Fix:
+- Live API: `NSFont.menuBarFont(ofSize: 0)` (size 0 = system menu-bar size).
+- Apply at layout and every show/refresh via `applyChromeFonts()` /
+  `ensureStripFitsMenuBarFont()`; weight variants keep bold/semibold/medium hierarchy
+  at the live menu-bar point size.
+- Observe `NSApplication.didChangeScreenParametersNotification` and
+  `AppleInterfaceThemeChangedNotification` (cheap) to re-fit when practical.
+- Control size scales with menu-bar pointSize (`.small` at ~13, `.regular` if ≥15).
+- Strip height from menu-bar metrics (min 28 / max 56); raises short persisted heights.
+- Left grip, BR resize, white glow, rounded `shadowPath` unchanged.
+
+Install path (ONLY): `~/Library/Input Methods/Ckcsys.app`
+No GitHub push/merge/release.
+
+Retest: switch to Ckcsys IME; StatusConsole 縱/繁簡/digit-source/光錨 should match
+Apple menu-bar text size. Change menu bar text size in System Settings, hide/reshow
+console (or reactivate IME) — size should follow. Grip / BR resize / glow / corners OK.
+
+---
+
+# Ckcsys macOS IMK — STATUS
+
+Time: 2026-10-27 13:40 Asia/Hong_Kong (UTC+8)
+Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
+
 ## Local 0.2.26 (build 28) — phrase mode digits ONLY pick (06177→自己)
 
 Ask (t255u/t256u/t259u): `06177` still broken after 0.2.25. Retest: after `06177`, digit `1`

@@ -129,18 +129,18 @@ final class StatusConsole: NSPanel {
     private var gripView: DragGripView!
     private var resizeGripView: ResizeGripView!
     private let cornerRadius: CGFloat = 12
-    /// Default / fallback height — strip stays toolbar-like.
-    private let defaultStripHeight: CGFloat = 26
     /// Default width when nothing persisted: grip + 縱 · 繁/簡 · 小鍵盤/鍵盤 · 光/錨 + BR resize.
-    private let defaultStripWidth: CGFloat = 190
-    private let minStripWidth: CGFloat = 160
-    private let maxStripWidth: CGFloat = 400
-    private let minStripHeight: CGFloat = 24
-    private let maxStripHeight: CGFloat = 40
+    private static let defaultStripWidth: CGFloat = 220
+    private static let minStripWidth: CGFloat = 180
+    private static let maxStripWidth: CGFloat = 420
+    /// Floor/ceiling wide enough for Default and Large menu-bar text without clipping.
+    private static let minStripHeight: CGFloat = 28
+    private static let maxStripHeight: CGFloat = 56
 
     /// Live size (persisted). Width-first resize; height optional within tight bounds.
-    private var stripWidth: CGFloat = 190
-    private var stripHeight: CGFloat = 26
+    private var stripWidth: CGFloat = StatusConsole.defaultStripWidth
+    private var stripHeight: CGFloat = StatusConsole.preferredStripHeight()
+    private var logoLabel: NSTextField!
 
     private var dragStartMouse: NSPoint?
     private var dragStartOrigin: NSPoint?
@@ -194,16 +194,38 @@ final class StatusConsole: NSPanel {
 
     private static func loadPersistedWidth() -> CGFloat {
         let defaults = UserDefaults.standard
-        guard defaults.object(forKey: widthKey) != nil else { return 190 }
+        guard defaults.object(forKey: widthKey) != nil else { return defaultStripWidth }
         let w = CGFloat(defaults.double(forKey: widthKey))
-        return min(max(w, 160), 400)
+        return min(max(w, minStripWidth), maxStripWidth)
     }
 
     private static func loadPersistedHeight() -> CGFloat {
         let defaults = UserDefaults.standard
-        guard defaults.object(forKey: heightKey) != nil else { return 26 }
+        let preferred = preferredStripHeight()
+        guard defaults.object(forKey: heightKey) != nil else { return preferred }
         let h = CGFloat(defaults.double(forKey: heightKey))
-        return min(max(h, 24), 40)
+        // Never shrink below what the live menu-bar font needs (raises older short strips).
+        return min(max(max(h, preferred), minStripHeight), maxStripHeight)
+    }
+
+    /// System Settings menu-bar font. `ofSize: 0` reads the live menu bar text size.
+    private static func menuBarChromeFont(weight: NSFont.Weight = .regular) -> NSFont {
+        let menu = NSFont.menuBarFont(ofSize: 0)
+        guard weight != .regular else { return menu }
+        return NSFont.systemFont(ofSize: menu.pointSize, weight: weight)
+    }
+
+    /// Strip height from live menu-bar metrics + rounded-bezel padding.
+    private static func preferredStripHeight(for font: NSFont = NSFont.menuBarFont(ofSize: 0)) -> CGFloat {
+        let line = ceil(font.ascender - font.descender + font.leading)
+        let raw = line + 14
+        return min(max(raw, minStripHeight), maxStripHeight)
+    }
+
+    private static func chromeControlSize(for font: NSFont) -> NSControl.ControlSize {
+        if font.pointSize >= 15 { return .regular }
+        if font.pointSize >= 12 { return .small }
+        return .mini
     }
 
     private func buildUI() {
@@ -227,31 +249,26 @@ final class StatusConsole: NSPanel {
         effectView.layer?.backgroundColor = NSColor.clear.cgColor
         effectView.autoresizingMask = [.width, .height]
 
-        let logo = NSTextField(labelWithString: "縱")
-        logo.font = NSFont.systemFont(ofSize: 11, weight: .bold)
-        logo.textColor = .controlAccentColor
+        logoLabel = NSTextField(labelWithString: "縱")
+        logoLabel.textColor = .controlAccentColor
 
         outputModeButton = NSButton(title: outputMode.label, target: self, action: #selector(toggleOutputMode(_:)))
         outputModeButton.bezelStyle = .rounded
-        outputModeButton.controlSize = .mini
-        outputModeButton.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
         outputModeButton.setButtonType(.momentaryPushIn)
         outputModeButton.setContentHuggingPriority(.required, for: .horizontal)
 
         sourceButton = NSButton(title: digitSource.label, target: self, action: #selector(toggleSource(_:)))
         sourceButton.bezelStyle = .rounded
-        sourceButton.controlSize = .mini
-        sourceButton.font = NSFont.systemFont(ofSize: 10, weight: .medium)
         sourceButton.setButtonType(.momentaryPushIn)
         sourceButton.setContentHuggingPriority(.required, for: .horizontal)
 
         anchorButton = NSButton(title: candidateAnchor.label, target: self, action: #selector(toggleAnchor(_:)))
         anchorButton.bezelStyle = .rounded
-        anchorButton.controlSize = .mini
-        anchorButton.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
         anchorButton.setButtonType(.momentaryPushIn)
         anchorButton.setContentHuggingPriority(.required, for: .horizontal)
         anchorButton.toolTip = candidateAnchor.toolTip
+
+        applyChromeFonts()
 
         gripView = DragGripView(frame: .zero)
         gripView.panel = self
@@ -263,7 +280,7 @@ final class StatusConsole: NSPanel {
         resizeGripView.translatesAutoresizingMaskIntoConstraints = false
         resizeGripView.toolTip = "拖曳調整狀態列寬度"
 
-        let stack = NSStackView(views: [logo, outputModeButton, sourceButton, anchorButton])
+        let stack = NSStackView(views: [logoLabel, outputModeButton, sourceButton, anchorButton])
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 4
@@ -277,7 +294,7 @@ final class StatusConsole: NSPanel {
             gripView.leadingAnchor.constraint(equalTo: effectView.leadingAnchor, constant: 4),
             gripView.centerYAnchor.constraint(equalTo: effectView.centerYAnchor),
             gripView.widthAnchor.constraint(equalToConstant: 14),
-            gripView.heightAnchor.constraint(equalToConstant: 18),
+            gripView.heightAnchor.constraint(equalToConstant: 20),
             stack.leadingAnchor.constraint(equalTo: gripView.trailingAnchor, constant: 2),
             stack.trailingAnchor.constraint(equalTo: resizeGripView.leadingAnchor, constant: -2),
             stack.topAnchor.constraint(equalTo: effectView.topAnchor),
@@ -308,6 +325,59 @@ final class StatusConsole: NSPanel {
         contentView?.layer?.masksToBounds = false
         applyAppearance()
         refreshLabels()
+        observeMenuBarChromeChanges()
+    }
+
+    /// Re-read NSFont.menuBarFont(ofSize: 0) for every chrome label/button.
+    private func applyChromeFonts() {
+        let menu = NSFont.menuBarFont(ofSize: 0)
+        let control = Self.chromeControlSize(for: menu)
+        logoLabel?.font = Self.menuBarChromeFont(weight: .bold)
+        outputModeButton?.font = Self.menuBarChromeFont(weight: .semibold)
+        outputModeButton?.controlSize = control
+        sourceButton?.font = Self.menuBarChromeFont(weight: .medium)
+        sourceButton?.controlSize = control
+        anchorButton?.font = Self.menuBarChromeFont(weight: .semibold)
+        anchorButton?.controlSize = control
+    }
+
+    /// Grow strip if current height would clip the live menu-bar glyphs.
+    private func ensureStripFitsMenuBarFont() {
+        applyChromeFonts()
+        let needed = Self.preferredStripHeight()
+        guard stripHeight + 0.5 < needed else { return }
+        let heightDelta = needed - stripHeight
+        stripHeight = needed
+        var origin = frame.origin
+        origin.y -= heightDelta
+        origin = clampedOrigin(origin)
+        setFrame(NSRect(origin: origin, size: NSSize(width: stripWidth, height: stripHeight)), display: true)
+        updateChromeShadowPath()
+        persistSize(currentSize())
+    }
+
+    private func observeMenuBarChromeChanges() {
+        let nc = NotificationCenter.default
+        nc.addObserver(
+            self,
+            selector: #selector(systemChromeMetricsMayHaveChanged(_:)),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
+        DistributedNotificationCenter.default.addObserver(
+            self,
+            selector: #selector(systemChromeMetricsMayHaveChanged(_:)),
+            name: Notification.Name("AppleInterfaceThemeChangedNotification"),
+            object: nil
+        )
+    }
+
+    @objc private func systemChromeMetricsMayHaveChanged(_ notification: Notification?) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.ensureStripFitsMenuBarFont()
+            self.applyAppearance()
+        }
     }
 
     @objc private func toggleSource(_ sender: Any?) {
@@ -340,6 +410,7 @@ final class StatusConsole: NSPanel {
     }
 
     private func refreshLabels() {
+        applyChromeFonts()
         sourceButton?.title = digitSource.label
         outputModeButton?.title = outputMode.label
         anchorButton?.title = candidateAnchor.label
@@ -529,12 +600,12 @@ final class StatusConsole: NSPanel {
         // Width-first: horizontal delta drives width. Small vertical delta optionally tweaks height.
         let dx = mouse.x - startMouse.x
         let dy = mouse.y - startMouse.y  // AppKit: up is positive; dragging BR down decreases y → negative
-        let nextW = min(max(startSize.width + dx, minStripWidth), maxStripWidth)
+        let nextW = min(max(startSize.width + dx, Self.minStripWidth), Self.maxStripWidth)
         // Prefer keeping height unless user clearly drags vertically.
         var nextH = startSize.height
         if abs(dy) > 4 {
             // Dragging down (mouse.y decreases) → grow height slightly so BR corner follows finger.
-            nextH = min(max(startSize.height - dy, minStripHeight), maxStripHeight)
+            nextH = min(max(startSize.height - dy, Self.minStripHeight), Self.maxStripHeight)
         }
         stripWidth = nextW
         stripHeight = nextH
@@ -610,6 +681,7 @@ final class StatusConsole: NSPanel {
 
     func showNearScreenBottom() {
         cancelPendingHide()
+        ensureStripFitsMenuBarFont()
         applyAppearance()
         placeUsingSavedOrDefault()
         orderFrontRegardless()
@@ -617,6 +689,7 @@ final class StatusConsole: NSPanel {
 
     func show(near client: AnyObject?) {
         cancelPendingHide()
+        ensureStripFitsMenuBarFont()
         applyAppearance()
         // Restore last dragged position (or bottom-center default); ignore caret for the strip.
         placeUsingSavedOrDefault()
