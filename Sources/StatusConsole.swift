@@ -56,8 +56,34 @@ enum DigitSource: String {
     }
 }
 
+
+/// Where the candidate popup anchors: IMK caret (default) or above the StatusConsole strip.
+/// Console-follow helps Google Docs/Chrome where caret rects are unreliable.
+enum CandidateAnchor: String {
+    case caret
+    case console
+
+    var label: String {
+        switch self {
+        case .caret: return "光"
+        case .console: return "錨"
+        }
+    }
+
+    var toolTip: String {
+        switch self {
+        case .caret: return "候選跟隨游標（點擊切換為跟隨狀態列）"
+        case .console: return "候選跟隨狀態列（點擊切換為跟隨游標）"
+        }
+    }
+
+    mutating func toggle() {
+        self = (self == .caret) ? .console : .caret
+    }
+}
+
 /// Compact modern floating status strip (vibrancy HUD).
-/// Shows logo · 繁/簡 · digit-source toggle (小鍵盤/鍵盤).
+/// Shows logo · 繁/簡 · digit-source (小鍵盤/鍵盤) · candidate anchor (光/錨).
 /// Drag empty chrome / labels to reposition; buttons keep normal clicks.
 final class StatusConsole: NSPanel {
     static let shared = StatusConsole()
@@ -70,11 +96,17 @@ final class StatusConsole: NSPanel {
         didSet { refreshLabels(); UserDefaults.standard.set(outputMode.rawValue, forKey: Self.outputModeKey) }
     }
 
+    private(set) var candidateAnchor: CandidateAnchor = .caret {
+        didSet { refreshLabels(); UserDefaults.standard.set(candidateAnchor.rawValue, forKey: Self.candidateAnchorKey) }
+    }
+
     var onDigitSourceChanged: ((DigitSource) -> Void)?
     var onOutputModeChanged: ((OutputMode) -> Void)?
+    var onCandidateAnchorChanged: ((CandidateAnchor) -> Void)?
 
     private static let digitSourceKey = "ckc.digitSource"
     private static let outputModeKey = "ckc.outputMode"
+    private static let candidateAnchorKey = "ckc.candidateAnchor"
     private static let originXKey = "ckc.statusConsole.originX"
     private static let originYKey = "ckc.statusConsole.originY"
 
@@ -84,9 +116,12 @@ final class StatusConsole: NSPanel {
     private var containerView: NSView!
     private var sourceButton: NSButton!
     private var outputModeButton: NSButton!
+    private var anchorButton: NSButton!
+    private var gripView: DragGripView!
     private let cornerRadius: CGFloat = 12
     private let stripHeight: CGFloat = 26
-    private let stripWidth: CGFloat = 140
+    /// Grip (~14) + 縱 · 繁/簡 · 小鍵盤/鍵盤 · 光/錨
+    private let stripWidth: CGFloat = 190
 
     private var dragStartMouse: NSPoint?
     private var dragStartOrigin: NSPoint?
@@ -122,6 +157,11 @@ final class StatusConsole: NSPanel {
         if let raw = UserDefaults.standard.string(forKey: Self.outputModeKey),
            let saved = OutputMode(rawValue: raw) {
             outputMode = saved
+        }
+
+        if let raw = UserDefaults.standard.string(forKey: Self.candidateAnchorKey),
+           let saved = CandidateAnchor(rawValue: raw) {
+            candidateAnchor = saved
         }
 
         buildUI()
@@ -165,16 +205,34 @@ final class StatusConsole: NSPanel {
         sourceButton.setButtonType(.momentaryPushIn)
         sourceButton.setContentHuggingPriority(.required, for: .horizontal)
 
-        let stack = NSStackView(views: [logo, outputModeButton, sourceButton])
+        anchorButton = NSButton(title: candidateAnchor.label, target: self, action: #selector(toggleAnchor(_:)))
+        anchorButton.bezelStyle = .rounded
+        anchorButton.controlSize = .mini
+        anchorButton.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
+        anchorButton.setButtonType(.momentaryPushIn)
+        anchorButton.setContentHuggingPriority(.required, for: .horizontal)
+        anchorButton.toolTip = candidateAnchor.toolTip
+
+        gripView = DragGripView(frame: .zero)
+        gripView.panel = self
+        gripView.translatesAutoresizingMaskIntoConstraints = false
+        gripView.toolTip = "拖曳移動狀態列"
+
+        let stack = NSStackView(views: [logo, outputModeButton, sourceButton, anchorButton])
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 4
-        stack.edgeInsets = NSEdgeInsets(top: 2, left: 8, bottom: 2, right: 7)
+        stack.edgeInsets = NSEdgeInsets(top: 2, left: 2, bottom: 2, right: 6)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
+        effectView.addSubview(gripView)
         effectView.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: effectView.leadingAnchor),
+            gripView.leadingAnchor.constraint(equalTo: effectView.leadingAnchor, constant: 4),
+            gripView.centerYAnchor.constraint(equalTo: effectView.centerYAnchor),
+            gripView.widthAnchor.constraint(equalToConstant: 14),
+            gripView.heightAnchor.constraint(equalToConstant: 18),
+            stack.leadingAnchor.constraint(equalTo: gripView.trailingAnchor, constant: 2),
             stack.trailingAnchor.constraint(equalTo: effectView.trailingAnchor),
             stack.topAnchor.constraint(equalTo: effectView.topAnchor),
             stack.bottomAnchor.constraint(equalTo: effectView.bottomAnchor),
@@ -214,6 +272,13 @@ final class StatusConsole: NSPanel {
         NSLog("[CKC] outputMode → %@", outputMode.rawValue)
     }
 
+    @objc private func toggleAnchor(_ sender: Any?) {
+        candidateAnchor.toggle()
+        onCandidateAnchorChanged?(candidateAnchor)
+        NSLog("[CKC] candidateAnchor → %@ (follow-console=%d)",
+              candidateAnchor.rawValue, candidateAnchor == .console ? 1 : 0)
+    }
+
     func toggleDigitSource() {
         digitSource.toggle()
         onDigitSourceChanged?(digitSource)
@@ -227,6 +292,8 @@ final class StatusConsole: NSPanel {
     private func refreshLabels() {
         sourceButton?.title = digitSource.label
         outputModeButton?.title = outputMode.label
+        anchorButton?.title = candidateAnchor.label
+        anchorButton?.toolTip = candidateAnchor.toolTip
     }
 
     private func applyAppearance() {
@@ -258,6 +325,7 @@ final class StatusConsole: NSPanel {
                 containerLayer.borderColor = NSColor.black.withAlphaComponent(0.22).cgColor
             }
         }
+        gripView?.needsDisplay = true
     }
 
     // MARK: - Position (default / persist / clamp)
@@ -337,6 +405,9 @@ final class StatusConsole: NSPanel {
         let dy = mouse.y - startMouse.y
         let next = clampedOrigin(NSPoint(x: startOrigin.x + dx, y: startOrigin.y + dy))
         setFrameOrigin(next)
+        if candidateAnchor == .console {
+            CandidateWindow.shared.repositionForCurrentAnchor()
+        }
     }
 
     func endDrag(with event: NSEvent) {
@@ -350,6 +421,9 @@ final class StatusConsole: NSPanel {
             setFrameOrigin(origin)
         }
         persistOrigin(origin)
+        if candidateAnchor == .console {
+            CandidateWindow.shared.repositionForCurrentAnchor()
+        }
         NSLog("[CKC] StatusConsole origin saved (%.0f, %.0f)", origin.x, origin.y)
     }
 
@@ -375,34 +449,67 @@ final class StatusConsole: NSPanel {
         orderOut(nil)
     }
 
-    /// Content view that claims clicks on empty chrome / labels so the panel can drag,
-    /// while leaving NSControl (buttons) hit-testing alone for normal clicks.
+    /// Hosts the vibrancy chrome + layer shadow. Drag is owned only by DragGripView
+    /// so 繁/簡 / 鍵盤 / 錨 buttons never fight mouse tracking.
     private final class ChromeView: NSView {
         weak var panel: StatusConsole?
 
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+            true
+        }
+    }
+
+    /// Airport-board style left grip: 3×6 grid of small tertiary-label dots.
+    /// Dedicated drag-only zone — mouseDown here moves the StatusConsole.
+    private final class DragGripView: NSView {
+        weak var panel: StatusConsole?
+
+        private let columns = 3
+        private let rows = 6
+        private let dotRadius: CGFloat = 1.1
+
+        override var isOpaque: Bool { false }
+
         override func resetCursorRects() {
             addCursorRect(bounds, cursor: .openHand)
-        }
-
-        override func hitTest(_ point: NSPoint) -> NSView? {
-            guard let hit = super.hitTest(point) else { return nil }
-            // Keep real controls clickable; everything else (labels, stack, effect, chrome) drags.
-            var v: NSView? = hit
-            while let cur = v {
-                if cur is NSControl { return hit }
-                v = cur.superview
-            }
-            return self
         }
 
         override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
             true
         }
 
+        override func draw(_ dirtyRect: NSRect) {
+            super.draw(dirtyRect)
+            let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let color = (dark
+                ? NSColor.tertiaryLabelColor.withAlphaComponent(0.85)
+                : NSColor.tertiaryLabelColor.withAlphaComponent(0.70))
+            color.setFill()
+
+            let padX: CGFloat = 2.0
+            let padY: CGFloat = 1.5
+            let usableW = max(1, bounds.width - padX * 2)
+            let usableH = max(1, bounds.height - padY * 2)
+            let stepX = usableW / CGFloat(columns - 1)
+            let stepY = usableH / CGFloat(rows - 1)
+            for col in 0..<columns {
+                for row in 0..<rows {
+                    let cx = padX + CGFloat(col) * stepX
+                    let cy = padY + CGFloat(row) * stepY
+                    let r = NSRect(
+                        x: cx - dotRadius,
+                        y: cy - dotRadius,
+                        width: dotRadius * 2,
+                        height: dotRadius * 2
+                    )
+                    NSBezierPath(ovalIn: r).fill()
+                }
+            }
+        }
+
         override func mouseDown(with event: NSEvent) {
             guard let panel = panel, let window = window else { return }
             panel.beginDrag(with: event)
-            // Track until mouse-up so drag continues off the strip.
             var tracking = true
             while tracking {
                 guard let next = window.nextEvent(

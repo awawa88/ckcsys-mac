@@ -53,6 +53,8 @@ final class CandidateWindow: NSPanel {
     private var lastKnownCaretRect: NSRect?
     /// Initial fallback position captured once per composition session.
     private var initialFallbackPosition: NSPoint?
+    /// Last IMK client used for caret positioning (for re-anchor after 光/錨 toggle).
+    private weak var lastClient: AnyObject?
     /// Local event monitor to force cursor even when NSButton.cursor fails in nonactivating panels.
     private var cursorMonitor: Any?
 
@@ -354,6 +356,7 @@ final class CandidateWindow: NSPanel {
 
         applyDigitModeLabels()
         reloadRows()
+        lastClient = client
         position(near: client)
         // Always raise — StatusConsole may have been orderFront'd; keep candidates on top after T/Y/*/ /.
         alphaValue = 1
@@ -376,6 +379,13 @@ final class CandidateWindow: NSPanel {
             focus: .characters,
             near: client
         )
+    }
+
+    /// Re-place the panel using current CandidateAnchor (光=caret / 錨=above console).
+    /// No-op when the panel is hidden.
+    func repositionForCurrentAnchor() {
+        guard isVisible else { return }
+        position(near: lastClient)
     }
 
     func hide() {
@@ -674,6 +684,12 @@ final class CandidateWindow: NSPanel {
     }
 
     private func position(near client: AnyObject?) {
+        // 錨 mode: ignore caret/mouse; park immediately above StatusConsole.
+        if StatusConsole.shared.candidateAnchor == .console {
+            positionAboveStatusConsole()
+            return
+        }
+
         // Always query fresh caret position - Chrome/Docs may return better rects after marked text.
         let freshAnchor = caretAnchor(near: client)
         
@@ -743,6 +759,30 @@ final class CandidateWindow: NSPanel {
         // Only nudge if we would cover the strip; still client-first.
         origin = originClearingStatusConsole(origin, size: size, visible: visible)
 
+        setFrame(NSRect(origin: origin, size: size), display: true)
+    }
+
+    /// Place candidate panel immediately above the StatusConsole strip (錨 / follow-console).
+    private func positionAboveStatusConsole() {
+        let console = StatusConsole.shared
+        let size = frame.size
+        let gap: CGFloat = 6
+        let consoleFrame = console.frame
+        let screen = screenFor(NSPoint(x: consoleFrame.midX, y: consoleFrame.midY))
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
+
+        var origin = NSPoint(
+            x: consoleFrame.minX,
+            y: consoleFrame.maxY + gap
+        )
+        if origin.y + size.height > visible.maxY - 8 {
+            origin.y = consoleFrame.minY - size.height - gap
+        }
+        origin.x = min(max(origin.x, visible.minX + 8), max(visible.minX + 8, visible.maxX - size.width - 8))
+        origin.y = min(max(origin.y, visible.minY + 8), max(visible.minY + 8, visible.maxY - size.height - 8))
+        NSLog("[CKC] candidateAnchor=console place above StatusConsole at %@", NSStringFromPoint(origin))
         setFrame(NSRect(origin: origin, size: size), display: true)
     }
 

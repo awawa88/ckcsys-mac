@@ -1,5 +1,29 @@
 # Ckcsys macOS IMK — STATUS
 
+Time: 2026-10-27 11:00 Asia/Hong_Kong (UTC+8)
+Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
+
+## Local 0.2.9 (build 11) — StatusConsole missing in iMessage
+
+Problem: console doesn’t show after clicking the iMessage caret.
+Cause: Messages/Notes/Chrome churn activate↔deactivate; `deactivateServer` called `StatusConsole.shared.hide()` immediately, so the strip was ordered out right after activate showed it.
+
+Fix (local only — not pushed):
+- `deactivateServer` schedules deferred StatusConsole hide (~0.30s) with generation token / `DispatchWorkItem`; activate / ensure-visible cancel it.
+- Candidate hide on deactivate unchanged (buffer kept; restore on activate).
+- Belt-and-suspenders: `ensureStatusConsoleVisible` on keyDown / special-key / digit compose if strip not visible.
+- ckcLog lines: `StatusConsole show (activate|ensure-key)`, `schedule-deferred-hide`, `deferred-hide fire` with client bundle id.
+
+- StatusConsole **光/錨** toggle (`ckc.candidateAnchor` = caret|console, default caret): 錨 parks candidate popup immediately above the strip (Google Docs/Chrome); 光 keeps caret placement. Repositions live on toggle and while dragging the strip in 錨 mode.
+
+- Left **drag grip** (3×6 tertiary dots, airport-board style): primary drag handle; buttons stay clickable (ChromeView no longer claims empty chrome for drag).
+
+---
+
+---
+
+# Prior STATUS
+
 Time: 2026-10-27 02:20 Asia/Hong_Kong (UTC+8)
 Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
 

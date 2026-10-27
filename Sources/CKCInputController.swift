@@ -24,6 +24,11 @@ class CKCInputController: IMKInputController {
     private var lastCapsLockOn: Bool?
     /// Debounce Num Lock keyDown+flagsChanged double delivery → one "?".
     private var lastWildcardAppendAt: TimeInterval = 0
+    /// Deferred StatusConsole hide: Messages/Notes/Chrome churn activate↔deactivate
+    /// around the caret; immediate hide on deactivate looks like the strip never appears.
+    private var pendingConsoleHide: DispatchWorkItem?
+    private var consoleHideGeneration: UInt64 = 0
+    private let consoleHideDelay: TimeInterval = 0.30
 
     /// Convert Traditional Chinese to Simplified using CFStringTransform (system ICU).
     /// Returns the input unchanged if conversion fails.
@@ -50,6 +55,37 @@ class CKCInputController: IMKInputController {
         return pages
     }
 
+    private func cancelPendingConsoleHide() {
+        pendingConsoleHide?.cancel()
+        pendingConsoleHide = nil
+        consoleHideGeneration &+= 1
+    }
+
+    private func scheduleDeferredConsoleHide(clientBundle: String) {
+        cancelPendingConsoleHide()
+        let gen = consoleHideGeneration
+        let delay = consoleHideDelay
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            guard gen == self.consoleHideGeneration else { return }
+            self.ckcLog("StatusConsole deferred-hide fire client=\(clientBundle)")
+            StatusConsole.shared.hide()
+            self.pendingConsoleHide = nil
+        }
+        pendingConsoleHide = work
+        ckcLog("StatusConsole schedule-deferred-hide delay=\(delay) client=\(clientBundle)")
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    /// Belt-and-suspenders: if activate was skipped/raced, first CKC key brings the strip back.
+    private func ensureStatusConsoleVisible(near client: Any?) {
+        cancelPendingConsoleHide()
+        guard !StatusConsole.shared.isVisible else { return }
+        let clientId = clientBundleId(client)
+        StatusConsole.shared.show(near: client as AnyObject?)
+        ckcLog("StatusConsole show (ensure-key) client=\(clientId)")
+    }
+
     override func activateServer(_ sender: Any!) {
         super.activateServer(sender)
         currentClient = sender as AnyObject
@@ -60,7 +96,9 @@ class CKCInputController: IMKInputController {
             ckcLog("activateServer lexicon reload (was \(DictionaryStore.shared.sourceDescription))")
             DictionaryStore.shared.load()
         }
+        cancelPendingConsoleHide()
         StatusConsole.shared.show(near: sender as AnyObject?)
+        ckcLog("StatusConsole show (activate) client=\(clientBundleId(sender))")
         // Keep candidate headers / marked chrome in sync when 小鍵盤↔鍵盤 toggles.
         StatusConsole.shared.onDigitSourceChanged = { [weak self] source in
             guard let self else { return }
@@ -76,6 +114,12 @@ class CKCInputController: IMKInputController {
         StatusConsole.shared.onOutputModeChanged = { [weak self] mode in
             guard let self else { return }
             self.ckcLog("outputMode changed → \(mode.rawValue)")
+        }
+        // 光/錨: reposition candidate popup immediately when toggle changes while visible.
+        StatusConsole.shared.onCandidateAnchorChanged = { [weak self] anchor in
+            guard let self else { return }
+            self.ckcLog("candidateAnchor → \(anchor.rawValue) follow-console=\(anchor == .console ? 1 : 0)")
+            CandidateWindow.shared.repositionForCurrentAnchor()
         }
         // Wire mouse click callback to commit the clicked candidate
         CandidateWindow.shared.onCandidateClicked = { [weak self] text, column in
@@ -105,7 +149,9 @@ class CKCInputController: IMKInputController {
         ckcLog("deactivateServer client=\(clientId) buffer='\(buffer)' punct=\(punctMode ? 1 : 0)")
         CandidateWindow.shared.hide()
         CandidateWindow.shared.onCandidateClicked = nil
-        StatusConsole.shared.hide()
+        // Do not hide StatusConsole immediately — focus flicker would order it out
+        // before the next activate can keep it visible (iMessage caret, Notes, Chrome).
+        scheduleDeferredConsoleHide(clientBundle: clientId)
         super.deactivateServer(sender)
     }
 
@@ -270,6 +316,7 @@ class CKCInputController: IMKInputController {
     /// - idle (empty buffer, first keystroke) → 標點 only (1st key cannot be wildcard)
     @discardableResult
     private func handleActiveSpecialKey(client: Any?) -> Bool {
+        ensureStatusConsoleVisible(near: client)
         let via = specialKeyLabel()
         if punctMode {
             let pages = punctPages
@@ -375,6 +422,8 @@ class CKCInputController: IMKInputController {
         }
 
         guard event.type == .keyDown else { return false }
+        // If activate raced / was skipped, first keyDown brings StatusConsole back.
+        ensureStatusConsoleVisible(near: sender)
 
         let keyCode = Int(event.keyCode)
         let chars = event.charactersIgnoringModifiers ?? event.characters ?? ""
@@ -737,6 +786,7 @@ class CKCInputController: IMKInputController {
                     lookKind = .phrases
                     CandidateWindow.shared.focusColumn(.phrases)
                 }
+                ensureStatusConsoleVisible(near: sender)
                 let clientId = clientBundleId(sender)
                 ckcLog("digit compose '\(buffer)' src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue) client=\(clientId) chars=\(charCandidates.count) phrases=\(phraseCandidates.count)")
                 updateUI(client: sender)
