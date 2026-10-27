@@ -141,8 +141,8 @@ final class StatusConsole: NSPanel {
     private static let minStripWidth: CGFloat = 180
     private static let maxStripWidth: CGFloat = 420
     /// Floor/ceiling wide enough for Default and Large menu-bar text without clipping.
-    /// Floor tracks tight chrome around raised buttons (see preferredStripHeight).
-    private static let minStripHeight: CGFloat = 24
+    /// Floor tracks chrome around raised buttons (see preferredStripHeight).
+    private static let minStripHeight: CGFloat = 26
     private static let maxStripHeight: CGFloat = 56
 
     /// Live size (persisted). Width-first resize; height optional within tight bounds.
@@ -214,7 +214,7 @@ final class StatusConsole: NSPanel {
 
     private static let heightChromeKey = "ckc.statusConsole.heightChrome"
     /// Bump when default vertical chrome changes so older taller persisted heights reset.
-    private static let heightChromeToken = "tight-0.2.32"
+    private static let heightChromeToken = "tight-0.2.33"
 
     private static func loadPersistedHeight() -> CGFloat {
         let defaults = UserDefaults.standard
@@ -237,11 +237,11 @@ final class StatusConsole: NSPanel {
         return NSFont.systemFont(ofSize: menu.pointSize, weight: weight)
     }
 
-    /// Strip height from live menu-bar metrics + minimal chrome above/below buttons.
-    /// Vertical pad used to be +14 (roomy); tightened to +8 so the strip hugs the bevel row.
+    /// Strip height from live menu-bar metrics + chrome above/below buttons.
+    /// Middle ground: was +14 (roomy) then +8 (too tight); +10 gives a little air without the old tall strip.
     private static func preferredStripHeight(for font: NSFont = NSFont.menuBarFont(ofSize: 0)) -> CGFloat {
         let line = ceil(font.ascender - font.descender + font.leading)
-        let raw = line + 8
+        let raw = line + 10
         return min(max(raw, minStripHeight), maxStripHeight)
     }
 
@@ -302,7 +302,7 @@ final class StatusConsole: NSPanel {
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 4
-        stack.edgeInsets = NSEdgeInsets(top: 1, left: 2, bottom: 1, right: 2)
+        stack.edgeInsets = NSEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         effectView.addSubview(gripView)

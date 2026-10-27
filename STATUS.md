@@ -1,3 +1,20 @@
+## Local 0.2.33 (build 35) — StatusConsole a little more air
+
+Ask: 0.2.32 was too tight — a little more room above/below buttons (not back to old tall).
+
+Changes:
+- `preferredStripHeight`: pad `+8` → `+10` (Default 13pt: ~24 → ~26; old 0.2.31 was +14/~30).
+- Stack `edgeInsets` top/bottom `1` → `2`.
+- `minStripHeight` `24` → `26`.
+- One-shot height reset token `tight-0.2.33` (width kept).
+
+Install path (ONLY): `~/Library/Input Methods/Ckcsys.app`
+No GitHub push/merge/release.
+
+Verify: re-select Ckcsys → strip a bit taller than 0.2.32, still clearly shorter than pre-0.2.32; buttons/bevel/grips OK.
+
+---
+
 ## Local 0.2.32 (build 34) — StatusConsole tighter vertical chrome
 
 Ask: upper/lower portions of the console shorter — closer to the buttons.
