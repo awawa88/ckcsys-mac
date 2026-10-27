@@ -1,3 +1,22 @@
+## Local 0.2.36 (build 38) — primary char codes prefer lower xh (意→333)
+
+Ask: custom-add phrase auto-detect for 意 was **337**, should be **333**.
+
+### Cause
+`DictionaryStore.loadPlainTextTable` builds `charPrimaryCode` from zimb. For same-
+length non-简码 codes it preferred **higher xh**, so 意 picked 337 (xh 8699) over
+canonical 333 (xh 8555). Windows phrase prefixes use 333 for 意.
+
+### Fix
+- Equal-length tie-break: `xh >= cur.xh` → `xh < cur.xh` (earlier/canonical listing).
+- Comments + fallback `縱` primary `2898` → `2838` (same lower-xh rule).
+- Verify: 意→333, 心→333, 縱→2838; `computeCode("意")` → `333`.
+
+Install path (ONLY): `~/Library/Input Methods/Ckcsys.app`
+No GitHub push/merge/release.
+
+---
+
 ## Local 0.2.35 (build 37) — 選字 column stays put on ↑↓/←→
 
 ### Bug

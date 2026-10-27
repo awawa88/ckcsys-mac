@@ -20,7 +20,7 @@ final class DictionaryStore {
     private var associationAcc: [String: [(Int, String)]] = [:]
     /// User phrases only (also merged into exact with priority).
     private(set) var userExact: [String: [String]] = [:]
-    /// Character → primary full code (from zimb; non-简码, prefer 4-digit, last xh on ties).
+    /// Character → primary full code (from zimb; non-简码, prefer 4-digit, lower/earlier xh on ties).
     private(set) var charPrimaryCode: [String: String] = [:]
     private(set) var sourceDescription: String = "unloaded"
     /// Windows cht_punctuation.tsv order (xh sorted) — keypad "-" picker pages of 9.
@@ -133,7 +133,7 @@ final class DictionaryStore {
             addSystem("6", "是")
             addSystem("9", "小")
             charPrimaryCode["我"] = "0307"
-            charPrimaryCode["縱"] = "2898"
+            charPrimaryCode["縱"] = "2838"
             charPrimaryCode["橫"] = "4498"
             charPrimaryCode["的"] = "0760"
             charPrimaryCode["小"] = "9"
@@ -264,7 +264,7 @@ final class DictionaryStore {
         var isHeaderChecked = false
         var codeIdx = 0
         var wordIdx = 1
-        // For char primary: track best (len4 preferred, then longer, then higher xh)
+        // For char primary: track best (len4 preferred, then longer, then lower xh)
         var bestMeta: [String: (code: String, len: Int, xh: Int, jm: Bool)] = [:]
 
         for line in data.split(whereSeparator: \.isNewline) {
@@ -322,7 +322,7 @@ final class DictionaryStore {
                 }
                 let len = code.count
                 if let cur = bestMeta[word] {
-                    // Prefer non-简码; then length==4; then longer; then higher xh (→ 2898 for 縱)
+                    // Prefer non-简码; then length==4; then longer; then lower xh (→ 2838 for 縱, 333 for 意)
                     let better: Bool
                     if cur.jm && !jm {
                         better = true
@@ -333,7 +333,7 @@ final class DictionaryStore {
                             better = false
                         } else if len > cur.len && cur.len != 4 {
                             better = true
-                        } else if len == cur.len && xh >= cur.xh {
+                        } else if len == cur.len && xh < cur.xh {
                             better = true
                         } else {
                             better = false
@@ -360,7 +360,7 @@ final class DictionaryStore {
                     } else if !existJm && !meta.jm && meta.len == 4 && existing.count != 4 {
                         charPrimaryCode[ch] = meta.code
                     } else if !existJm && !meta.jm && meta.len == existing.count {
-                        // keep higher xh already chosen in bestMeta pass — replace
+                        // keep lower xh already chosen in bestMeta pass — replace
                         charPrimaryCode[ch] = meta.code
                     }
                 } else {
