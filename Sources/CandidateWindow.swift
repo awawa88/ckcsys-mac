@@ -48,7 +48,8 @@ final class CandidateWindow: NSPanel {
     private var phraseRowViews: [CandidateRowView] = []
     /// Active digit mode — drives ÷/× vs Y/T column headers and footer hint.
     private var digitSource: DigitSource = .numpad
-    /// Last known good caret position for stable fallback (never tracks mouse).
+    /// Last known caret position - may be suspicious (near corners/edges).
+    /// Always re-query on each show() and upgrade from suspicious to good rects.
     private var lastKnownCaretRect: NSRect?
     /// Initial fallback position captured once per composition session.
     private var initialFallbackPosition: NSPoint?
@@ -628,23 +629,40 @@ final class CandidateWindow: NSPanel {
     }
 
     private func position(near client: AnyObject?) {
-        // Always anchor to the IMK text client / caret — never StatusConsole as primary.
-        let anchor = caretAnchor(near: client)
+        // Always query fresh caret position - Chrome/Docs may return better rects after marked text.
+        let freshAnchor = caretAnchor(near: client)
         
         let screen: NSScreen?
         let visible: NSRect
+        var rectToUse: NSRect?
+        var usingFallback = false
         
-        if let a = anchor {
-            // Found a valid caret rect — cache it and use it
-            lastKnownCaretRect = a
-            screen = screenFor(a.origin)
+        // Prefer good fresh rect > suspicious fresh rect > cached rect > fallback
+        if let fresh = freshAnchor {
+            let suspicious = isSuspiciousCaretRect(fresh)
+            if suspicious {
+                NSLog("[CKC] fresh caret rect is SUSPICIOUS (near corner/edge): %@ - will keep trying to upgrade",
+                      NSStringFromRect(fresh))
+            } else {
+                NSLog("[CKC] fresh caret rect is GOOD: %@", NSStringFromRect(fresh))
+            }
+            // Always use fresh rect if we got one, but cache good rects preferentially
+            lastKnownCaretRect = fresh
+            rectToUse = fresh
+            screen = screenFor(fresh.origin)
             visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
-        } else if let lastGood = lastKnownCaretRect {
-            // No current anchor, but we have a cached position from earlier in this session
-            screen = screenFor(lastGood.origin)
+        } else if let cached = lastKnownCaretRect {
+            // No fresh rect, use cached (might be suspicious but better than fallback)
+            let suspicious = isSuspiciousCaretRect(cached)
+            NSLog("[CKC] using cached caret rect%@: %@",
+                  suspicious ? " (suspicious, but no fresh rect available)" : "",
+                  NSStringFromRect(cached))
+            rectToUse = cached
+            screen = screenFor(cached.origin)
             visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
         } else {
-            // No anchor ever found — use fallback screen position
+            // No rect at all - use stable fallback
+            usingFallback = true
             let mouse = NSEvent.mouseLocation
             screen = screenFor(mouse)
             visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
@@ -653,15 +671,15 @@ final class CandidateWindow: NSPanel {
         let size = frame.size
         var origin: NSPoint
         
-        if let a = anchor ?? lastKnownCaretRect {
-            // Use caret position (current or cached)
+        if let rect = rectToUse {
+            // Use caret position (fresh or cached)
             // Prefer below caret; flip above if not enough room.
-            origin = NSPoint(x: a.origin.x, y: a.origin.y - size.height - 6)
+            origin = NSPoint(x: rect.origin.x, y: rect.origin.y - size.height - 6)
             if origin.y < visible.minY + 8 {
-                origin.y = a.maxY + 6
+                origin.y = rect.maxY + 6
             }
         } else {
-            // First-time fallback: capture initial position once per session.
+            // Fallback: capture initial position once per session.
             // Use lower-center of screen (stable, never tracks mouse movement).
             if let cached = initialFallbackPosition {
                 origin = cached
@@ -686,27 +704,38 @@ final class CandidateWindow: NSPanel {
     }
 
     /// Best-effort caret / insert-point rect from the IMK client.
+    /// Returns the first GOOD (non-suspicious) rect, or falls back to a suspicious rect.
     private func caretAnchor(near client: AnyObject?) -> NSRect? {
         guard let client = client else { return nil }
+
+        var candidateRects: [(rect: NSRect, suspicious: Bool)] = []
 
         if let input = client as? IMKTextInput {
             // Try indices near the marked text end / current composition position.
             // Chrome/Docs/Word may return bogus rects for index 0 but correct for the end.
             let markedRange = input.markedRange()
-            var indicesToTry = [0, 1, 2]
+            var indicesToTry: [Int] = []
             if markedRange.location != NSNotFound && markedRange.length > 0 {
-                // Add marked text end and near-end positions
+                // Prioritize marked text range positions - Chrome updates these after setMarkedText
                 let end = markedRange.location + markedRange.length
-                indicesToTry.insert(end, at: 0)
-                if end > 0 { indicesToTry.insert(end - 1, at: 1) }
-                if markedRange.length > 1 { indicesToTry.insert(markedRange.location + 1, at: 2) }
+                indicesToTry.append(end)
+                if end > 0 { indicesToTry.append(end - 1) }
+                indicesToTry.append(markedRange.location)
+                if markedRange.length > 1 { indicesToTry.append(markedRange.location + 1) }
             }
+            // Also try 0, 1, 2 as fallbacks
+            indicesToTry.append(contentsOf: [0, 1, 2])
             
             for idx in indicesToTry {
                 var lineRect = NSRect.zero
                 _ = input.attributes(forCharacterIndex: idx, lineHeightRectangle: &lineRect)
                 if isPlausibleCaretRect(lineRect) {
-                    return lineRect
+                    let suspicious = isSuspiciousCaretRect(lineRect)
+                    candidateRects.append((lineRect, suspicious))
+                    // If we found a good rect, use it immediately
+                    if !suspicious {
+                        return lineRect
+                    }
                 }
             }
         }
@@ -729,10 +758,21 @@ final class CandidateWindow: NSPanel {
                 actual = NSRange(location: NSNotFound, length: 0)
                 let r = tic.firstRect(forCharacterRange: range, actualRange: &actual)
                 if isPlausibleCaretRect(r) {
-                    return r
+                    let suspicious = isSuspiciousCaretRect(r)
+                    candidateRects.append((r, suspicious))
+                    // If we found a good rect, use it immediately
+                    if !suspicious {
+                        return r
+                    }
                 }
             }
         }
+        
+        // If we only found suspicious rects, return the first one as last resort
+        if let first = candidateRects.first {
+            return first.rect
+        }
+        
         return nil
     }
 
@@ -747,6 +787,57 @@ final class CandidateWindow: NSPanel {
         return screens.contains { screen in
             screen.frame.insetBy(dx: -pad, dy: -pad).intersects(r)
         }
+    }
+    
+    /// Detect suspicious rects that Chrome/Docs returns before the user clicks.
+    /// These pass basic plausibility but cluster near corners/edges (especially top-left).
+    /// We'll use them as last resort but keep trying to upgrade to better rects.
+    private func isSuspiciousCaretRect(_ r: NSRect) -> Bool {
+        guard !NSScreen.screens.isEmpty else { return false }
+        
+        // Find which screen this rect is on
+        let screen = NSScreen.screens.first { $0.frame.contains(r.origin) } 
+            ?? NSScreen.main 
+            ?? NSScreen.screens.first!
+        let frame = screen.frame
+        let visible = screen.visibleFrame
+        
+        // Chrome/Docs often returns rects clustered near (0,0) content origin
+        // or near top-left of visible area before the user clicks.
+        // Reject rects within 100pt of any screen corner or edge.
+        let cornerMargin: CGFloat = 100
+        let edgeMargin: CGFloat = 80
+        
+        let x = r.origin.x
+        let y = r.origin.y
+        
+        // Too close to any corner
+        let nearTopLeft = x < frame.minX + cornerMargin && y > frame.maxY - cornerMargin
+        let nearTopRight = x > frame.maxX - cornerMargin && y > frame.maxY - cornerMargin
+        let nearBottomLeft = x < frame.minX + cornerMargin && y < frame.minY + cornerMargin
+        let nearBottomRight = x > frame.maxX - cornerMargin && y < frame.minY + cornerMargin
+        
+        if nearTopLeft || nearTopRight || nearBottomLeft || nearBottomRight {
+            return true
+        }
+        
+        // Too close to any edge (especially top and left where Chrome/Docs bogus rects cluster)
+        let nearLeft = x < visible.minX + edgeMargin
+        let nearTop = y > visible.maxY - edgeMargin
+        let nearRight = x > visible.maxX - edgeMargin
+        let nearBottom = y < visible.minY + edgeMargin
+        
+        // Top-left edge cluster is the most common bad rect from Chrome/Docs
+        if nearLeft && nearTop {
+            return true
+        }
+        
+        // Suspicious if very close to any screen edge
+        if nearLeft || nearTop || nearRight || nearBottom {
+            return true
+        }
+        
+        return false
     }
 
     private func screenFor(_ point: NSPoint) -> NSScreen? {
