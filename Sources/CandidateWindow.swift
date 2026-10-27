@@ -560,27 +560,22 @@ final class CandidateWindow: NSPanel {
                 return event
             }
             
-            // Convert to window coordinates
-            let localPoint = self.convertPoint(fromScreen: mouseLocation)
+            // Convert to window coordinates for hit testing
+            let windowPoint = self.convertPoint(fromScreen: mouseLocation)
             
-            // Check if over any visible, non-empty candidate row
-            var overCandidate = false
-            for row in self.charRowViews + self.phraseRowViews {
-                guard !row.isHidden, !row.isEmpty else { continue }
-                let rowFrame = row.convert(row.bounds, to: nil)
-                if rowFrame.contains(localPoint) {
-                    overCandidate = true
-                    break
+            // Use AppKit hit testing to find which view is under the mouse
+            if let hitView = self.contentView?.hitTest(windowPoint) {
+                // Check if hit view is a candidate row or descendant
+                for row in self.charRowViews + self.phraseRowViews {
+                    if (hitView == row || hitView.isDescendant(of: row)) && !row.isEmpty {
+                        NSCursor.pointingHand.set()
+                        return event
+                    }
                 }
             }
             
-            // Force cursor based on location
-            if overCandidate {
-                NSCursor.pointingHand.set()
-            } else {
-                NSCursor.arrow.set()
-            }
-            
+            // Over panel but not over a candidate - show arrow
+            NSCursor.arrow.set()
             return event
         }
     }
