@@ -571,7 +571,8 @@ final class DictionaryStore {
     }
 
     /// True when `code` itself has at least one multi-character (詞) entry in user or system lexicon.
-    /// Used so digits can auto-選詞 (e.g. 06177 → 自己) even if longer keys also exist.
+    /// Used for logging / diagnostics. Auto-選詞 no longer keys off this when hasLongerCode
+    /// is true — longer codes override shorter exact-詞 auto-shortlist (see shouldAutoSelectMode).
     func hasExactPhrase(for code: String) -> Bool {
         guard !code.isEmpty else { return false }
         if let userHits = userExact[code], userHits.contains(where: { $0.count >= 2 }) {

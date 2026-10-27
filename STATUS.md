@@ -1,5 +1,29 @@
 # Ckcsys macOS IMK — STATUS
 
+Time: 2026-10-27 13:15 Asia/Hong_Kong (UTC+8)
+Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
+
+## Local 0.2.24 (build 26) — longer phrase overrides shorter auto-shortlist
+
+Ask (t249u–t252u): after adding a longer phrase (e.g. 58834→輸入法), typing only the shorter prefix `5883` must **not** auto-enter 選詞 / auto-show 中等／責令. Shorter 詞 only after explicit 選詞 (T/×). At the full longer code, user-added phrase ranks first. General for every future Add Phrase save (user or stock longer code under the buffer), not a 58834 special case.
+
+Root cause: `shouldAutoSelectMode` still returned true when `hasExactPhrase(buffer)` && no 字 even if `hasLongerCode(buffer)` — so 5883 locked ` **` and shortlisted 中等／責令.
+
+Fix:
+- `shouldAutoSelectMode`: **only** auto-enter when `!hasLongerCode(buffer)` and candidates exist. Longer user/stock codes under the buffer override shorter exact-詞 auto-shortlist.
+- Keep 0.2.22 `hasCode(withPrefix:)` compose-over-pick when a digit extends a longer code.
+- Keep dead-end auto-選詞 (e.g. 00259+1 → 像素 when no longer prefix).
+- Ranking unchanged: `candidates()` already puts `userExact` first at the exact code (輸入法 before stock 整人法／贅文 at 58834).
+
+Install path (ONLY): `~/Library/Input Methods/Ckcsys.app`
+No GitHub push/merge/release.
+
+Retest: type `5883` → no auto 選詞 list / no ` **`; press 選詞 (T/×) → 中等／責令; type `58834` → 輸入法 first; dead-end `00259`+1 still → 像素.
+
+---
+
+# Ckcsys macOS IMK — STATUS
+
 Time: 2026-10-27 13:03 Asia/Hong_Kong (UTC+8)
 Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
 
