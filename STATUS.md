@@ -1,3 +1,29 @@
+## Local 0.2.28 (build 30) — kill StatusConsole rectangular corner haze
+
+Ask: screenshot still showed a light gray / semi-transparent RECTANGULAR haze box
+around the rounded StatusConsole pill on dark backgrounds, despite hasShadow=false,
+rounded shadowPath, and container/effectView corner masks.
+
+Root cause: dark-mode soft white CALayer shadow on chromeView (opacity 0.50, radius ~10)
+still blurs into a light rectangular region outside the rounded corners. shadowPath made
+the cast rounded, but the soft white glow itself reads as the haze box.
+
+Fix:
+- Drop outer chrome glow entirely (shadowOpacity/radius 0, clear shadowPath/color).
+- Keep thin rounded border on clipped container (1pt; white ~0.38 dark / black ~0.20 light)
+  so the strip stays findable without a soft rectangular glow.
+- Keep cornerRadius + masksToBounds (+ continuous cornerCurve) on container and
+  NSVisualEffectView; menu-bar font tracking from 0.2.27 unchanged.
+
+Install path (ONLY): `~/Library/Input Methods/Ckcsys.app`
+No GitHub push/merge/release.
+
+Retest: switch to Ckcsys IME on a dark desktop — pill should be a clean rounded strip
+with a thin edge, no light rectangular box at the corners. Grip / BR resize / 繁簡 /
+digit-source / 錨 still work.
+
+---
+
 ## Local 0.2.27 (build 29) — StatusConsole follows system menu-bar font
 
 Ask (t260u/t261u/t262u): console chrome text should match / follow the macOS **system

@@ -308,8 +308,8 @@ final class StatusConsole: NSPanel {
         container.addSubview(effectView)
         containerView = container
 
-        // Wrap in ChromeView for drag support. Shadow lives on chromeView
-        // (masksToBounds must stay false so the glow can extend outside).
+        // Wrap in ChromeView for drag support. No outer glow (glow caused
+        // rectangular haze); container below holds the clipped rounded border.
         chromeView = ChromeView(frame: container.bounds)
         chromeView.panel = self
         chromeView.autoresizingMask = [.width, .height]
@@ -422,55 +422,47 @@ final class StatusConsole: NSPanel {
         effectView.appearance = NSApp.effectiveAppearance
         effectView.material = dark ? .hudWindow : .popover
 
-        // Soft layer glow on outer chrome (not NSPanel.hasShadow — that leaks black corners).
-        // Thin border on the clipped rounded container so the edge reads as a "shadow border".
-        // IMPORTANT: always set a rounded shadowPath. Without it, Core Animation casts from the
-        // rectangular chrome bounds and leaves a light semi-transparent square haze outside the
-        // rounded strip (especially visible at the right corners on dark backgrounds).
+        // No soft outer glow. A white CALayer shadow (even with rounded shadowPath) still
+        // blurs into a light rectangular haze around the pill on dark backgrounds — that
+        // was the remaining console-corner haze. Visibility comes from the thin border on
+        // the clipped rounded container instead (same pattern as CandidateWindow).
         if let chromeLayer = chromeView?.layer {
             chromeLayer.masksToBounds = false
+            chromeLayer.shadowOpacity = 0
+            chromeLayer.shadowRadius = 0
             chromeLayer.shadowOffset = .zero
-            chromeLayer.shadowRadius = dark ? 10 : 8
-            if dark {
-                chromeLayer.shadowColor = NSColor.white.cgColor
-                chromeLayer.shadowOpacity = 0.50
-            } else {
-                chromeLayer.shadowColor = NSColor.black.cgColor
-                chromeLayer.shadowOpacity = 0.28
-            }
+            chromeLayer.shadowPath = nil
+            chromeLayer.shadowColor = nil
         }
         if let containerLayer = containerView?.layer {
             containerLayer.cornerRadius = cornerRadius
             containerLayer.masksToBounds = true
-            containerLayer.borderWidth = 0.75
+            if #available(macOS 10.15, *) {
+                containerLayer.cornerCurve = .continuous
+            }
+            containerLayer.borderWidth = 1.0
             if dark {
-                containerLayer.borderColor = NSColor.white.withAlphaComponent(0.42).cgColor
+                containerLayer.borderColor = NSColor.white.withAlphaComponent(0.38).cgColor
             } else {
-                containerLayer.borderColor = NSColor.black.withAlphaComponent(0.22).cgColor
+                containerLayer.borderColor = NSColor.black.withAlphaComponent(0.20).cgColor
             }
         }
-        // Keep vibrancy + glow path in sync with the rounded container.
+        // Vibrancy must round-mask itself; parent clip alone is not enough.
         effectView?.layer?.cornerRadius = cornerRadius
         effectView?.layer?.masksToBounds = true
-        updateChromeShadowPath()
+        if #available(macOS 10.15, *), let effectLayer = effectView?.layer {
+            effectLayer.cornerCurve = .continuous
+        }
         gripView?.needsDisplay = true
         resizeGripView?.needsDisplay = true
     }
 
-    /// Rounded shadow path matching the strip — prevents rectangular white/black glow haze.
+    /// Kept as a no-op refresh hook so resize/show call sites stay valid if a
+    /// non-rectangular shadow is ever reintroduced. Currently clears any leftover path.
     private func updateChromeShadowPath() {
-        guard let chromeView = chromeView, let chromeLayer = chromeView.layer else { return }
-        let bounds = chromeView.bounds
-        guard bounds.width > 0.5, bounds.height > 0.5 else {
-            chromeLayer.shadowPath = nil
-            return
-        }
-        chromeLayer.shadowPath = CGPath(
-            roundedRect: bounds,
-            cornerWidth: cornerRadius,
-            cornerHeight: cornerRadius,
-            transform: nil
-        )
+        guard let chromeLayer = chromeView?.layer else { return }
+        chromeLayer.shadowOpacity = 0
+        chromeLayer.shadowPath = nil
     }
 
     // MARK: - Position (default / persist / clamp)
@@ -705,8 +697,8 @@ final class StatusConsole: NSPanel {
         orderOut(nil)
     }
 
-    /// Hosts the vibrancy chrome + layer shadow. Drag is owned only by DragGripView
-    /// so 繁/簡 / 鍵盤 / 錨 buttons never fight mouse tracking.
+    /// Hosts the vibrancy chrome (no outer layer shadow). Drag is owned only by
+    /// DragGripView so 繁/簡 / 鍵盤 / 錨 buttons never fight mouse tracking.
     private final class ChromeView: NSView {
         weak var panel: StatusConsole?
 
