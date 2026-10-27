@@ -764,8 +764,8 @@ class CKCInputController: IMKInputController {
         var display = buffer
         // Marked chrome stays Chinese-only; ÷/× or Y/T live on candidate column headers.
         switch lookKind {
-        case .phrases: display += " [選詞]"
-        case .characters: display += " [選字]"
+        case .phrases: display += " **"
+        case .characters: display += " *"
         case .all: break
         }
         let attr = NSAttributedString(string: display)
