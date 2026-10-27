@@ -24,6 +24,16 @@ class CKCInputController: IMKInputController {
     /// Debounce Num Lock keyDown+flagsChanged double delivery → one "?".
     private var lastWildcardAppendAt: TimeInterval = 0
 
+    /// Convert Traditional Chinese to Simplified using CFStringTransform (system ICU).
+    /// Returns the input unchanged if conversion fails.
+    private func convertToSimplified(_ traditional: String) -> String {
+        let mutable = NSMutableString(string: traditional)
+        if CFStringTransform(mutable, nil, "Traditional-Simplified" as CFString, false) {
+            return mutable as String
+        }
+        return traditional
+    }
+
     /// Pages of 9 from cht_punctuation.tsv (Windows xh order).
     private var punctPages: [[String]] {
         let list = DictionaryStore.shared.punctuationList
@@ -61,6 +71,11 @@ class CKCInputController: IMKInputController {
             }
             self.ckcLog("digitSource changed → \(source.rawValue) headers=\(source.charColumnHeader)/\(source.phraseColumnHeader)")
         }
+        // Log output mode changes
+        StatusConsole.shared.onOutputModeChanged = { [weak self] mode in
+            guard let self else { return }
+            self.ckcLog("outputMode changed → \(mode.rawValue)")
+        }
         // Wire mouse click callback to commit the clicked candidate
         CandidateWindow.shared.onCandidateClicked = { [weak self] text, column in
             guard let self else { return }
@@ -72,7 +87,7 @@ class CKCInputController: IMKInputController {
             }
         }
         CandidateWindow.shared.applyDigitModeLabels(digitSource: StatusConsole.shared.digitSource)
-        ckcLog("activateServer dict=\(DictionaryStore.shared.sourceDescription) digitSource=\(StatusConsole.shared.digitSource.rawValue) capsOn=\(lastCapsLockOn == true ? 1 : 0)")
+        ckcLog("activateServer dict=\(DictionaryStore.shared.sourceDescription) digitSource=\(StatusConsole.shared.digitSource.rawValue) outputMode=\(StatusConsole.shared.outputMode.rawValue) capsOn=\(lastCapsLockOn == true ? 1 : 0)")
     }
 
     override func deactivateServer(_ sender: Any!) {
@@ -808,15 +823,24 @@ class CKCInputController: IMKInputController {
 
     private func commit(_ text: String, client: Any?) {
         guard let client = (client as? IMKTextInput) ?? (currentClient as? IMKTextInput) else { return }
+        
+        // Convert to Simplified if output mode is simplified; candidates always show Traditional
+        let outputText: String
+        if StatusConsole.shared.outputMode == .simplified {
+            outputText = convertToSimplified(text)
+        } else {
+            outputText = text
+        }
+        
         client.setMarkedText("", selectionRange: NSRange(location: 0, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
-        client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
+        client.insertText(outputText, replacementRange: NSRange(location: NSNotFound, length: 0))
         buffer = ""
         charCandidates = []
         phraseCandidates = []
         lookKind = .all
         selectedIndex = 0
         CandidateWindow.shared.hide()
-        NSLog("[CKC] committed %@", text)
+        NSLog("[CKC] committed %@ (outputMode=%@)", outputText, StatusConsole.shared.outputMode.rawValue)
     }
 
     private func clearComposition(client: Any?) {
@@ -906,9 +930,18 @@ class CKCInputController: IMKInputController {
         lookKind = .all
         selectedIndex = 0
         guard let client = (client as? IMKTextInput) ?? (currentClient as? IMKTextInput) else { return }
+        
+        // Convert punctuation to Simplified if output mode is simplified
+        let outputText: String
+        if StatusConsole.shared.outputMode == .simplified {
+            outputText = convertToSimplified(text)
+        } else {
+            outputText = text
+        }
+        
         client.setMarkedText("", selectionRange: NSRange(location: 0, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
-        client.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
-        NSLog("[CKC] punct %@", text)
+        client.insertText(outputText, replacementRange: NSRange(location: NSNotFound, length: 0))
+        NSLog("[CKC] punct %@ (outputMode=%@)", outputText, StatusConsole.shared.outputMode.rawValue)
     }
 
     private struct DigitInfo {
