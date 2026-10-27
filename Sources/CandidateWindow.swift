@@ -52,6 +52,8 @@ final class CandidateWindow: NSPanel {
     private var lastKnownCaretRect: NSRect?
     /// Initial fallback position captured once per composition session.
     private var initialFallbackPosition: NSPoint?
+    /// Local event monitor for cursor updates (nonactivating panels don't receive proper tracking)
+    private var cursorMonitor: Any?
 
     private let panelWidthBoth: CGFloat = 340
     private let panelWidthSingle: CGFloat = 200
@@ -135,34 +137,32 @@ final class CandidateWindow: NSPanel {
     }
 
     private func buildUI() {
-        effectView = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: panelWidthBoth, height: 120))
-        effectView.material = .hudWindow
-        effectView.blendingMode = .behindWindow
-        // IME is LSUIElement / never key — followsWindowActiveState washes out the HUD.
-        effectView.state = .active
-        effectView.wantsLayer = true
-        effectView.clipsToBounds = true
-        effectView.layer?.cornerRadius = cornerRadius
-        effectView.layer?.masksToBounds = true
-        effectView.layer?.borderWidth = 0.5
-        effectView.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
-
-        let container = NSView(frame: effectView.bounds)
+        // Single container with rounded mask - no borders or multiple radii stacking
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: panelWidthBoth, height: 120))
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.clear.cgColor
         container.layer?.cornerRadius = cornerRadius
-        container.layer?.masksToBounds = false
-        container.layer?.shadowColor = NSColor.black.cgColor
-        container.layer?.shadowOpacity = 0.35
-        container.layer?.shadowRadius = 20
-        container.layer?.shadowOffset = CGSize(width: 0, height: -3)
-        container.autoresizingMask = [.width, .height]
+        container.layer?.masksToBounds = true
+        
+        // EffectView fills container exactly, inheriting the clip
+        effectView = NSVisualEffectView(frame: container.bounds)
+        effectView.material = .hudWindow
+        effectView.blendingMode = .behindWindow
+        effectView.state = .active
+        effectView.wantsLayer = true
+        // No separate cornerRadius or border on effectView - container clips it
+        effectView.layer?.backgroundColor = NSColor.clear.cgColor
         effectView.autoresizingMask = [.width, .height]
+        
         container.addSubview(effectView)
+        container.autoresizingMask = [.width, .height]
+        
+        contentView = container
+        contentView?.wantsLayer = true
+        contentView?.layer?.backgroundColor = NSColor.clear.cgColor
 
         // Composition digits stay in the client marked text only — not duplicated here.
         pageLabel = NSTextField(labelWithString: "")
-        pageLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
         pageLabel.textColor = .tertiaryLabelColor
         pageLabel.alignment = .right
 
@@ -252,10 +252,6 @@ final class CandidateWindow: NSPanel {
             leftColumnBox.widthAnchor.constraint(equalToConstant: charColWidth),
             rightColumnBox.widthAnchor.constraint(greaterThanOrEqualToConstant: phraseColWidth - 40),
         ])
-
-        contentView = container
-        contentView?.wantsLayer = true
-        contentView?.layer?.backgroundColor = NSColor.clear.cgColor
     }
 
     private func wrapColumn(_ stack: NSStackView, title: String, minWidth: CGFloat, titleOut: inout NSTextField!) -> NSView {
@@ -365,6 +361,9 @@ final class CandidateWindow: NSPanel {
         level = .popUpMenu
         orderFrontRegardless()
         applyAppearance()
+        
+        // Install cursor monitor for nonactivating panel (tracking areas don't work reliably)
+        installCursorMonitor()
     }
 
     /// Idle 標點 picker — same chrome and caret positioning as composition candidates.
@@ -391,6 +390,7 @@ final class CandidateWindow: NSPanel {
         // Reset cached positions for next composition session
         lastKnownCaretRect = nil
         initialFallbackPosition = nil
+        removeCursorMonitor()
         orderOut(nil)
     }
 
@@ -625,6 +625,77 @@ final class CandidateWindow: NSPanel {
         effectView.appearance = NSApp.effectiveAppearance
         effectView.material = dark ? .hudWindow : .popover
         effectView.layer?.borderColor = (dark ? NSColor.white.withAlphaComponent(0.14) : NSColor.black.withAlphaComponent(0.08)).cgColor
+    }
+
+    // MARK: - Cursor handling for nonactivating panel
+    
+    /// Install local event monitor to update cursor over nonactivating panel.
+    /// Nonactivating panels don't receive proper NSTrackingArea events or cursorUpdate.
+    private func installCursorMonitor() {
+        removeCursorMonitor()
+        
+        cursorMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown]) { [weak self] event in
+            guard let self = self, self.isVisible else { return event }
+            
+            let mouseLocation = NSEvent.mouseLocation
+            let windowFrame = self.frame
+            let mouseInWindow = windowFrame.contains(mouseLocation)
+            
+            if mouseInWindow {
+                // Convert to window coordinates (screen coords have origin at bottom-left)
+                let windowPoint = NSPoint(
+                    x: mouseLocation.x - windowFrame.origin.x,
+                    y: mouseLocation.y - windowFrame.origin.y
+                )
+                
+                // Check if over any visible candidate row
+                var overClickableRow = false
+                
+                if self.displayMode != .phrases {
+                    for (i, rowView) in self.charRowViews.enumerated() {
+                        if !rowView.isHidden {
+                            let rowFrame = rowView.frame
+                            let rowFrameInWindow = self.effectView.convert(rowFrame, from: rowView.superview)
+                            if rowFrameInWindow.contains(windowPoint) {
+                                overClickableRow = true
+                                NSLog("[CKC-cursor] over char row \(i+1)")
+                                break
+                            }
+                        }
+                    }
+                }
+                
+                if !overClickableRow && self.displayMode != .characters {
+                    for (i, rowView) in self.phraseRowViews.enumerated() {
+                        if !rowView.isHidden {
+                            let rowFrame = rowView.frame
+                            let rowFrameInWindow = self.effectView.convert(rowFrame, from: rowView.superview)
+                            if rowFrameInWindow.contains(windowPoint) {
+                                overClickableRow = true
+                                NSLog("[CKC-cursor] over phrase row \(i+1)")
+                                break
+                            }
+                        }
+                    }
+                }
+                
+                if overClickableRow {
+                    NSCursor.pointingHand.set()
+                } else {
+                    NSCursor.arrow.set()
+                }
+            }
+            
+            return event
+        }
+    }
+    
+    private func removeCursorMonitor() {
+        if let monitor = cursorMonitor {
+            NSEvent.removeMonitor(monitor)
+            cursorMonitor = nil
+        }
+        NSCursor.arrow.set()
     }
 
     private func position(near client: AnyObject?) {

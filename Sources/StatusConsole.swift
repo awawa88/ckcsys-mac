@@ -99,27 +99,21 @@ final class StatusConsole: NSPanel {
     }
 
     private func buildUI() {
-        chromeView = ChromeView(frame: NSRect(x: 0, y: 0, width: stripWidth, height: stripHeight))
-        chromeView.panel = self
-        chromeView.autoresizingMask = [.width, .height]
-        chromeView.wantsLayer = true
-        chromeView.layer?.backgroundColor = NSColor.clear.cgColor
-        chromeView.layer?.cornerRadius = cornerRadius
-        chromeView.layer?.masksToBounds = false
-        chromeView.layer?.shadowColor = NSColor.black.cgColor
-        chromeView.layer?.shadowOpacity = 0.30
-        chromeView.layer?.shadowRadius = 12
-        chromeView.layer?.shadowOffset = CGSize(width: 0, height: -2)
-
-        effectView = NSVisualEffectView(frame: chromeView.bounds)
+        // Single container with rounded mask - no borders or stacked radii
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: stripWidth, height: stripHeight))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.clear.cgColor
+        container.layer?.cornerRadius = cornerRadius
+        container.layer?.masksToBounds = true
+        
+        // EffectView fills container exactly, inheriting the rounded clip
+        effectView = NSVisualEffectView(frame: container.bounds)
         effectView.material = .hudWindow
         effectView.blendingMode = .behindWindow
         effectView.state = .followsWindowActiveState
         effectView.wantsLayer = true
-        effectView.clipsToBounds = true
-        effectView.layer?.cornerRadius = cornerRadius
-        effectView.layer?.masksToBounds = true
-        effectView.layer?.borderWidth = 0.5
+        // No separate cornerRadius or border - container masks it
+        effectView.layer?.backgroundColor = NSColor.clear.cgColor
         effectView.autoresizingMask = [.width, .height]
 
         let logo = NSTextField(labelWithString: "縱")
@@ -152,7 +146,17 @@ final class StatusConsole: NSPanel {
             stack.bottomAnchor.constraint(equalTo: effectView.bottomAnchor),
         ])
 
-        chromeView.addSubview(effectView)
+        container.addSubview(effectView)
+        
+        // Wrap in ChromeView for drag support
+        chromeView = ChromeView(frame: container.bounds)
+        chromeView.panel = self
+        chromeView.autoresizingMask = [.width, .height]
+        chromeView.wantsLayer = true
+        chromeView.layer?.backgroundColor = NSColor.clear.cgColor
+        chromeView.addSubview(container)
+        container.autoresizingMask = [.width, .height]
+        
         contentView = chromeView
         contentView?.wantsLayer = true
         contentView?.layer?.backgroundColor = NSColor.clear.cgColor
@@ -184,7 +188,6 @@ final class StatusConsole: NSPanel {
         let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         effectView.appearance = NSApp.effectiveAppearance
         effectView.material = dark ? .hudWindow : .popover
-        effectView.layer?.borderColor = (dark ? NSColor.white.withAlphaComponent(0.14) : NSColor.black.withAlphaComponent(0.08)).cgColor
     }
 
     // MARK: - Position (default / persist / clamp)
