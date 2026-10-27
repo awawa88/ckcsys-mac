@@ -1,3 +1,23 @@
+## Local 0.2.32 (build 34) — StatusConsole tighter vertical chrome
+
+Ask: upper/lower portions of the console shorter — closer to the buttons.
+
+Changes:
+- `preferredStripHeight`: menu-bar line metric pad `+14` → `+8` (Default 13pt: ~30 → ~24).
+- Stack `edgeInsets` top/bottom `2` → `1` (horizontal left/right stay 2).
+- `minStripHeight` `28` → `24` so the new preferred is not floored back up.
+- One-shot UserDefaults reset (`ckc.statusConsole.heightChrome` = `tight-0.2.32`) clears
+  persisted height so older taller strips adopt the new preferred (width unchanged).
+- RaisedChromeButton bevel / press / grips untouched; horizontal spacing unchanged.
+
+Install path (ONLY): `~/Library/Input Methods/Ckcsys.app`
+No GitHub push/merge/release.
+
+Verify: re-select Ckcsys (or fresh text field) → StatusConsole strip hugs the button row
+top and bottom with less empty chrome; buttons still press/bevel; drag + BR resize still work.
+
+---
+
 ## Local 0.2.31 (build 33) — trailing 0 not swallowed into **
 
 ### Bug

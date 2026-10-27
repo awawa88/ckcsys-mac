@@ -141,7 +141,8 @@ final class StatusConsole: NSPanel {
     private static let minStripWidth: CGFloat = 180
     private static let maxStripWidth: CGFloat = 420
     /// Floor/ceiling wide enough for Default and Large menu-bar text without clipping.
-    private static let minStripHeight: CGFloat = 28
+    /// Floor tracks tight chrome around raised buttons (see preferredStripHeight).
+    private static let minStripHeight: CGFloat = 24
     private static let maxStripHeight: CGFloat = 56
 
     /// Live size (persisted). Width-first resize; height optional within tight bounds.
@@ -211,8 +212,17 @@ final class StatusConsole: NSPanel {
         return min(max(w, minStripWidth), maxStripWidth)
     }
 
+    private static let heightChromeKey = "ckc.statusConsole.heightChrome"
+    /// Bump when default vertical chrome changes so older taller persisted heights reset.
+    private static let heightChromeToken = "tight-0.2.32"
+
     private static func loadPersistedHeight() -> CGFloat {
         let defaults = UserDefaults.standard
+        // One-shot: drop auto/older tall heights after chrome tighten (keeps width).
+        if defaults.string(forKey: heightChromeKey) != heightChromeToken {
+            defaults.removeObject(forKey: heightKey)
+            defaults.set(heightChromeToken, forKey: heightChromeKey)
+        }
         let preferred = preferredStripHeight()
         guard defaults.object(forKey: heightKey) != nil else { return preferred }
         let h = CGFloat(defaults.double(forKey: heightKey))
@@ -227,10 +237,11 @@ final class StatusConsole: NSPanel {
         return NSFont.systemFont(ofSize: menu.pointSize, weight: weight)
     }
 
-    /// Strip height from live menu-bar metrics + rounded-bezel padding.
+    /// Strip height from live menu-bar metrics + minimal chrome above/below buttons.
+    /// Vertical pad used to be +14 (roomy); tightened to +8 so the strip hugs the bevel row.
     private static func preferredStripHeight(for font: NSFont = NSFont.menuBarFont(ofSize: 0)) -> CGFloat {
         let line = ceil(font.ascender - font.descender + font.leading)
-        let raw = line + 14
+        let raw = line + 8
         return min(max(raw, minStripHeight), maxStripHeight)
     }
 
@@ -291,7 +302,7 @@ final class StatusConsole: NSPanel {
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 4
-        stack.edgeInsets = NSEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
+        stack.edgeInsets = NSEdgeInsets(top: 1, left: 2, bottom: 1, right: 2)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         effectView.addSubview(gripView)
