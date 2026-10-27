@@ -261,25 +261,17 @@ final class StatusConsole: NSPanel {
         effectView.layer?.backgroundColor = NSColor.clear.cgColor
         effectView.autoresizingMask = [.width, .height]
 
-        ckcEnabledButton = NSButton(title: "縱", target: self, action: #selector(toggleCkcEnabled(_:)))
-        ckcEnabledButton.bezelStyle = .rounded
-        ckcEnabledButton.setButtonType(.momentaryPushIn)
+        ckcEnabledButton = RaisedChromeButton(title: "縱", target: self, action: #selector(toggleCkcEnabled(_:)))
         ckcEnabledButton.setContentHuggingPriority(.required, for: .horizontal)
         ckcEnabledButton.toolTip = "縱橫輸入開／關（關閉後為一般鍵盤）"
 
-        outputModeButton = NSButton(title: outputMode.label, target: self, action: #selector(toggleOutputMode(_:)))
-        outputModeButton.bezelStyle = .rounded
-        outputModeButton.setButtonType(.momentaryPushIn)
+        outputModeButton = RaisedChromeButton(title: outputMode.label, target: self, action: #selector(toggleOutputMode(_:)))
         outputModeButton.setContentHuggingPriority(.required, for: .horizontal)
 
-        sourceButton = NSButton(title: digitSource.label, target: self, action: #selector(toggleSource(_:)))
-        sourceButton.bezelStyle = .rounded
-        sourceButton.setButtonType(.momentaryPushIn)
+        sourceButton = RaisedChromeButton(title: digitSource.label, target: self, action: #selector(toggleSource(_:)))
         sourceButton.setContentHuggingPriority(.required, for: .horizontal)
 
-        anchorButton = NSButton(title: candidateAnchor.label, target: self, action: #selector(toggleAnchor(_:)))
-        anchorButton.bezelStyle = .rounded
-        anchorButton.setButtonType(.momentaryPushIn)
+        anchorButton = RaisedChromeButton(title: candidateAnchor.label, target: self, action: #selector(toggleAnchor(_:)))
         anchorButton.setContentHuggingPriority(.required, for: .horizontal)
         anchorButton.toolTip = candidateAnchor.toolTip
 
@@ -440,7 +432,7 @@ final class StatusConsole: NSPanel {
         applyCkcEnabledChrome()
     }
 
-    /// On = bright accent blue; Off = muted grayish blue (still readable).
+    /// On = bright LED blue; Off = dim LED blue (same hue, unlit).
     private func applyCkcEnabledChrome() {
         guard let button = ckcEnabledButton else { return }
         let color = ckcEnabled ? Self.ckcEnabledOnColor : Self.ckcEnabledOffColor
@@ -458,18 +450,32 @@ final class StatusConsole: NSPanel {
         if #available(macOS 10.14, *) {
             button.contentTintColor = color
         }
+        button.needsDisplay = true
     }
 
-    private static var ckcEnabledOnColor: NSColor { .controlAccentColor }
+    /// Bright LED blue — vivid electric/cyan, punchier than default controlAccentColor.
+    private static var ckcEnabledOnColor: NSColor {
+        NSColor(name: nil) { appearance in
+            let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            if dark {
+                // Lit LED on dark HUD (~ sRGB 0.30, 0.78, 1.00)
+                return NSColor(srgbRed: 0.30, green: 0.78, blue: 1.00, alpha: 1)
+            }
+            // Lit LED on light (~ sRGB 0.05, 0.52, 0.98)
+            return NSColor(srgbRed: 0.05, green: 0.52, blue: 0.98, alpha: 1)
+        }
+    }
 
-    /// Dark grayish blue — muted blue-gray, not plain gray / dim white.
+    /// Dim LED blue — same hue family as on-state, unlit/dim (not plain gray).
     private static var ckcEnabledOffColor: NSColor {
         NSColor(name: nil) { appearance in
             let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
             if dark {
-                return NSColor(srgbRed: 0.42, green: 0.50, blue: 0.66, alpha: 1)
+                // Dim LED on dark (~ sRGB 0.26, 0.40, 0.58)
+                return NSColor(srgbRed: 0.26, green: 0.40, blue: 0.58, alpha: 1)
             }
-            return NSColor(srgbRed: 0.32, green: 0.40, blue: 0.56, alpha: 1)
+            // Dim LED on light (~ sRGB 0.28, 0.40, 0.56)
+            return NSColor(srgbRed: 0.28, green: 0.40, blue: 0.56, alpha: 1)
         }
     }
 
@@ -511,6 +517,10 @@ final class StatusConsole: NSPanel {
         }
         gripView?.needsDisplay = true
         resizeGripView?.needsDisplay = true
+        ckcEnabledButton?.needsDisplay = true
+        outputModeButton?.needsDisplay = true
+        sourceButton?.needsDisplay = true
+        anchorButton?.needsDisplay = true
     }
 
     /// Kept as a no-op refresh hook so resize/show call sites stay valid if a
@@ -751,6 +761,165 @@ final class StatusConsole: NSPanel {
             persistOrigin(clampedOrigin(origin))
         }
         orderOut(nil)
+    }
+
+    /// Raised 3D chrome button for StatusConsole strip.
+    /// Idle = beveled/raised; mouse-down = pressed-in (darker fill + title nudge).
+    private final class RaisedChromeButton: NSButton {
+        private let cornerRadius: CGFloat = 6
+
+        convenience init(title: String, target: AnyObject?, action: Selector?) {
+            self.init(frame: .zero)
+            self.title = title
+            self.target = target
+            self.action = action
+            commonInit()
+        }
+
+        override init(frame frameRect: NSRect) {
+            super.init(frame: frameRect)
+            commonInit()
+        }
+
+        required init?(coder: NSCoder) {
+            super.init(coder: coder)
+            commonInit()
+        }
+
+        private func commonInit() {
+            bezelStyle = .shadowlessSquare
+            setButtonType(.momentaryPushIn)
+            isBordered = false
+            isTransparent = false
+            wantsLayer = false
+            focusRingType = .none
+        }
+
+        override var intrinsicContentSize: NSSize {
+            let base = super.intrinsicContentSize
+            // Extra padding so the bevel reads around the glyph/label.
+            return NSSize(width: max(base.width + 10, 28), height: max(base.height + 4, 22))
+        }
+
+        override var isHighlighted: Bool {
+            didSet { needsDisplay = true }
+        }
+
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func mouseDown(with event: NSEvent) {
+            guard isEnabled, let window = window else { return }
+            highlight(true)
+            needsDisplay = true
+            var tracking = true
+            while tracking {
+                guard let next = window.nextEvent(
+                    matching: [.leftMouseDragged, .leftMouseUp],
+                    until: .distantFuture,
+                    inMode: .eventTracking,
+                    dequeue: true
+                ) else { break }
+                let local = convert(next.locationInWindow, from: nil)
+                let inside = bounds.contains(local)
+                switch next.type {
+                case .leftMouseDragged:
+                    if isHighlighted != inside {
+                        highlight(inside)
+                        needsDisplay = true
+                    }
+                case .leftMouseUp:
+                    highlight(false)
+                    needsDisplay = true
+                    if inside {
+                        sendAction(action, to: target)
+                    }
+                    tracking = false
+                default:
+                    break
+                }
+            }
+        }
+
+        override func draw(_ dirtyRect: NSRect) {
+            let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let pressed = isHighlighted
+            let insetBounds = bounds.insetBy(dx: 0.5, dy: 0.5)
+            let path = NSBezierPath(roundedRect: insetBounds, xRadius: cornerRadius, yRadius: cornerRadius)
+
+            // Face fill: raised lighter, pressed darker / inset.
+            let fill: NSColor
+            if pressed {
+                fill = dark
+                    ? NSColor(srgbRed: 0.10, green: 0.12, blue: 0.16, alpha: 0.92)
+                    : NSColor(srgbRed: 0.72, green: 0.74, blue: 0.78, alpha: 0.95)
+            } else {
+                fill = dark
+                    ? NSColor(srgbRed: 0.22, green: 0.24, blue: 0.30, alpha: 0.92)
+                    : NSColor(srgbRed: 0.93, green: 0.94, blue: 0.96, alpha: 0.95)
+            }
+            fill.setFill()
+            path.fill()
+
+            // Bevel edges drawn inside bounds (parent masksToBounds would clip layer shadows).
+            let topEdge = pressed
+                ? (dark ? NSColor.black.withAlphaComponent(0.45) : NSColor.black.withAlphaComponent(0.22))
+                : (dark ? NSColor.white.withAlphaComponent(0.42) : NSColor.white.withAlphaComponent(0.95))
+            let bottomEdge = pressed
+                ? (dark ? NSColor.white.withAlphaComponent(0.10) : NSColor.white.withAlphaComponent(0.35))
+                : (dark ? NSColor.black.withAlphaComponent(0.55) : NSColor.black.withAlphaComponent(0.22))
+            let sideEdge = dark
+                ? NSColor.white.withAlphaComponent(pressed ? 0.08 : 0.16)
+                : NSColor.black.withAlphaComponent(pressed ? 0.10 : 0.12)
+
+            let clip = NSBezierPath(roundedRect: insetBounds, xRadius: cornerRadius, yRadius: cornerRadius)
+            NSGraphicsContext.saveGraphicsState()
+            clip.addClip()
+
+            // Top highlight (raised) or top shade (pressed).
+            let top = NSBezierPath()
+            top.move(to: NSPoint(x: insetBounds.minX + 2, y: insetBounds.maxY - 1))
+            top.line(to: NSPoint(x: insetBounds.maxX - 2, y: insetBounds.maxY - 1))
+            top.lineWidth = pressed ? 1.0 : 1.25
+            topEdge.setStroke()
+            top.stroke()
+
+            // Bottom shade (raised) or bottom lift (pressed inset).
+            let bottom = NSBezierPath()
+            bottom.move(to: NSPoint(x: insetBounds.minX + 2, y: insetBounds.minY + 1))
+            bottom.line(to: NSPoint(x: insetBounds.maxX - 2, y: insetBounds.minY + 1))
+            bottom.lineWidth = pressed ? 1.0 : 1.25
+            bottomEdge.setStroke()
+            bottom.stroke()
+
+            NSGraphicsContext.restoreGraphicsState()
+
+            // Outer rim
+            sideEdge.setStroke()
+            path.lineWidth = 1.0
+            path.stroke()
+
+            // Title — nudge down 1pt while pressed for tactile sink.
+            let drawTitle: NSAttributedString
+            if attributedTitle.length > 0 {
+                drawTitle = attributedTitle
+            } else {
+                let color = dark ? NSColor.labelColor : NSColor.labelColor
+                let fontToUse = font ?? NSFont.menuBarFont(ofSize: 0)
+                drawTitle = NSAttributedString(
+                    string: title,
+                    attributes: [
+                        .foregroundColor: color,
+                        .font: fontToUse,
+                    ]
+                )
+            }
+            let titleSize = drawTitle.size()
+            let titleOrigin = NSPoint(
+                x: bounds.midX - titleSize.width / 2,
+                y: bounds.midY - titleSize.height / 2 + (pressed ? -1.0 : 0.5)
+            )
+            drawTitle.draw(at: titleOrigin)
+        }
     }
 
     /// Hosts the vibrancy chrome (no outer layer shadow). Drag is owned only by

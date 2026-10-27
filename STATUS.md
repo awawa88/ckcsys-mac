@@ -1,3 +1,27 @@
+## Local 0.2.30 (build 32) — 縱 LED blue + 3D chrome press
+
+Ask: 縱 on/off should read as LED blue at two brightnesses (not gray-only off); every
+StatusConsole chrome button (縱 · 繁/簡 · 小鍵盤/鍵盤 · 光/錨) should feel tactile 3D —
+raised idle, visibly pressed-in while mouse-down, spring back on mouse-up.
+
+Changes:
+- StatusConsole `ckcEnabledOnColor`: vivid electric/cyan LED blue (dark sRGB ~0.30/0.78/1.00;
+  light ~0.05/0.52/0.98) — brighter than default `controlAccentColor`.
+- `ckcEnabledOffColor`: dim LED of the same blue family (dark ~0.26/0.40/0.58;
+  light ~0.28/0.40/0.56) — not plain gray.
+- New `RaisedChromeButton` for all four strip buttons: custom bevel (top highlight +
+  bottom shade), darker inset fill + 1pt title nudge while highlighted/pressed; own
+  mouse-down tracking so hold shows the press. Toggle/passthrough behavior from 0.2.29
+  unchanged.
+
+Install path (ONLY): `~/Library/Input Methods/Ckcsys.app`
+No GitHub push/merge/release.
+
+Verify: re-select Ckcsys → 縱 lit LED blue when on, dim blue when off; hold any chrome
+button and see pressed-in bevel; release returns to raised; off still passes keys through.
+
+---
+
 ## Local 0.2.29 (build 31) — 縱 StatusConsole on/off (compose gate)
 
 Ask: make 縱 a real button like 繁/小鍵盤/錨. On = CKC compose as today; Off = normal
