@@ -121,6 +121,8 @@ final class CandidateWindow: NSPanel {
         becomesKeyOnlyIfNeeded = true
         isReleasedWhenClosed = false
         animationBehavior = .utilityWindow
+        // Ensure mouse events (clicks and tracking) work for nonactivating panel
+        ignoresMouseEvents = false
 
         buildUI()
         orderOut(nil)
@@ -619,22 +621,33 @@ final class CandidateWindow: NSPanel {
     private func position(near client: AnyObject?) {
         // Always anchor to the IMK text client / caret — never StatusConsole as primary.
         let anchor = caretAnchor(near: client)
+        let mouse = NSEvent.mouseLocation
 
-        let screen = screenFor(anchor?.origin ?? NSEvent.mouseLocation)
+        let screen = screenFor(anchor?.origin ?? mouse)
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
         let size = frame.size
 
         var origin: NSPoint
         if let a = anchor {
-            // Prefer below caret; flip above if not enough room.
-            origin = NSPoint(x: a.origin.x, y: a.origin.y - size.height - 6)
-            if origin.y < visible.minY + 8 {
-                origin.y = a.maxY + 6
+            // Sanity check: if caret rect is far from mouse while composing, it may be wrong.
+            // Chrome/Docs often returns content-area origin instead of real caret.
+            let distanceFromMouse = hypot(a.midX - mouse.x, a.midY - mouse.y)
+            if !composition.isEmpty && distanceFromMouse > 200 {
+                NSLog("[CKC] caret rect far from mouse (%.0fpt) during compose '%@' — using mouse fallback. caret=%@ mouse=%@",
+                      distanceFromMouse, composition as NSString,
+                      NSStringFromRect(a), NSStringFromPoint(mouse))
+                // Use mouse fallback instead of bogus caret rect
+                origin = NSPoint(x: mouse.x + 12, y: mouse.y - size.height - 12)
+            } else {
+                // Prefer below caret; flip above if not enough room.
+                origin = NSPoint(x: a.origin.x, y: a.origin.y - size.height - 6)
+                if origin.y < visible.minY + 8 {
+                    origin.y = a.maxY + 6
+                }
             }
         } else {
             // Fallback: near mouse (typing area), else lower-center of the client screen.
             // Do NOT park beside StatusConsole.
-            let mouse = NSEvent.mouseLocation
             if visible.contains(mouse) {
                 origin = NSPoint(x: mouse.x + 12, y: mouse.y - size.height - 12)
             } else {
@@ -659,8 +672,19 @@ final class CandidateWindow: NSPanel {
         guard let client = client else { return nil }
 
         if let input = client as? IMKTextInput {
-            // Try a few character indices — idle punct often has empty marked text.
-            for idx in [0, 1, 2] {
+            // Try indices near the marked text end / current composition position.
+            // Chrome/Docs/Word may return bogus rects for index 0 but correct for the end.
+            let markedRange = input.markedRange()
+            var indicesToTry = [0, 1, 2]
+            if markedRange.location != NSNotFound && markedRange.length > 0 {
+                // Add marked text end and near-end positions
+                let end = markedRange.location + markedRange.length
+                indicesToTry.insert(end, at: 0)
+                if end > 0 { indicesToTry.insert(end - 1, at: 1) }
+                if markedRange.length > 1 { indicesToTry.insert(markedRange.location + 1, at: 2) }
+            }
+            
+            for idx in indicesToTry {
                 var lineRect = NSRect.zero
                 _ = input.attributes(forCharacterIndex: idx, lineHeightRectangle: &lineRect)
                 if isPlausibleCaretRect(lineRect) {
@@ -672,11 +696,17 @@ final class CandidateWindow: NSPanel {
         if let tic = client as? NSTextInputClient {
             let sel = tic.selectedRange()
             var actual = NSRange(location: NSNotFound, length: 0)
-            let ranges: [NSRange] = [
-                sel,
-                NSRange(location: max(0, sel.location), length: 0),
-                NSRange(location: 0, length: 0),
-            ]
+            // Try selection end first (most relevant for composition), then start, then zero
+            var ranges: [NSRange] = []
+            if sel.location != NSNotFound {
+                let end = sel.location + sel.length
+                ranges.append(NSRange(location: end, length: 0))
+                if end > 0 { ranges.append(NSRange(location: end - 1, length: 0)) }
+                ranges.append(sel)
+                ranges.append(NSRange(location: max(0, sel.location), length: 0))
+            }
+            ranges.append(NSRange(location: 0, length: 0))
+            
             for range in ranges {
                 actual = NSRange(location: NSNotFound, length: 0)
                 let r = tic.firstRect(forCharacterRange: range, actualRange: &actual)
@@ -789,7 +819,7 @@ private final class CandidateRowView: NSView {
         }
         trackingArea = NSTrackingArea(
             rect: bounds,
-            options: [.mouseEnteredAndExited, .cursorUpdate, .activeInActiveApp],
+            options: [.mouseEnteredAndExited, .cursorUpdate, .activeInActiveApp, .inVisibleRect],
             owner: self,
             userInfo: nil
         )
@@ -799,6 +829,12 @@ private final class CandidateRowView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         setupTrackingArea()
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // Return self for hit-testing so tracking and clicks work,
+        // even though we have label subviews
+        return bounds.contains(point) ? self : nil
     }
 
     override func mouseDown(with event: NSEvent) {
