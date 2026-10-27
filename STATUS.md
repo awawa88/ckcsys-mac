@@ -3,6 +3,21 @@
 Time: 2026-10-27 12:25 Asia/Hong_Kong (UTC+8)
 Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
 
+## Local 0.2.21 (build 23) — StatusConsole right-corner haze
+
+Ask: still a light semi-transparent rectangular layer at the right corner(s) outside the rounded strip.
+
+Cause: white soft glow was on `chromeView.layer` with no `shadowPath`, so Core Animation cast from the rectangular chrome bounds (plus NSVisualEffectView sometimes ignoring parent clip).
+
+Fix:
+- Set rounded `shadowPath` matching strip bounds + cornerRadius; refresh on show/resize.
+- Also round-mask `effectView` itself (`cornerRadius` + `masksToBounds`).
+- Keep glow, left grip, BR resize, thin border.
+
+Installed locally to `~/Library/Input Methods/Ckcsys.app` only — not pushed/released.
+
+Retest: open console on dark background; right corners should have no light semi square.
+
 ## Local 0.2.20 (build 22) — association commit inserts suffix only (no seed double)
 
 Keeps 0.2.19 選詞 marked ` **`. Fix: picking an association/guess phrase after a committed 字 no longer re-inserts the seed character (習 + 習慣 was 習習慣).

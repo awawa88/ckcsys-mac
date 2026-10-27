@@ -221,7 +221,9 @@ final class StatusConsole: NSPanel {
         effectView.blendingMode = .behindWindow
         effectView.state = .followsWindowActiveState
         effectView.wantsLayer = true
-        // No separate cornerRadius or border - container masks it
+        // Vibrancy often ignores a parent clip; round-mask the effect view itself too.
+        effectView.layer?.cornerRadius = cornerRadius
+        effectView.layer?.masksToBounds = true
         effectView.layer?.backgroundColor = NSColor.clear.cgColor
         effectView.autoresizingMask = [.width, .height]
 
@@ -351,6 +353,9 @@ final class StatusConsole: NSPanel {
 
         // Soft layer glow on outer chrome (not NSPanel.hasShadow — that leaks black corners).
         // Thin border on the clipped rounded container so the edge reads as a "shadow border".
+        // IMPORTANT: always set a rounded shadowPath. Without it, Core Animation casts from the
+        // rectangular chrome bounds and leaves a light semi-transparent square haze outside the
+        // rounded strip (especially visible at the right corners on dark backgrounds).
         if let chromeLayer = chromeView?.layer {
             chromeLayer.masksToBounds = false
             chromeLayer.shadowOffset = .zero
@@ -373,8 +378,28 @@ final class StatusConsole: NSPanel {
                 containerLayer.borderColor = NSColor.black.withAlphaComponent(0.22).cgColor
             }
         }
+        // Keep vibrancy + glow path in sync with the rounded container.
+        effectView?.layer?.cornerRadius = cornerRadius
+        effectView?.layer?.masksToBounds = true
+        updateChromeShadowPath()
         gripView?.needsDisplay = true
         resizeGripView?.needsDisplay = true
+    }
+
+    /// Rounded shadow path matching the strip — prevents rectangular white/black glow haze.
+    private func updateChromeShadowPath() {
+        guard let chromeView = chromeView, let chromeLayer = chromeView.layer else { return }
+        let bounds = chromeView.bounds
+        guard bounds.width > 0.5, bounds.height > 0.5 else {
+            chromeLayer.shadowPath = nil
+            return
+        }
+        chromeLayer.shadowPath = CGPath(
+            roundedRect: bounds,
+            cornerWidth: cornerRadius,
+            cornerHeight: cornerRadius,
+            transform: nil
+        )
     }
 
     // MARK: - Position (default / persist / clamp)
@@ -450,6 +475,7 @@ final class StatusConsole: NSPanel {
         let size = currentSize()
         let origin = clampedOrigin(savedOrigin() ?? defaultOrigin())
         setFrame(NSRect(origin: origin, size: size), display: true)
+        updateChromeShadowPath()
     }
 
     // MARK: - Drag (from ChromeView)
@@ -518,6 +544,7 @@ final class StatusConsole: NSPanel {
         origin.y -= heightDelta
         origin = clampedOrigin(origin)
         setFrame(NSRect(origin: origin, size: NSSize(width: nextW, height: nextH)), display: true)
+        updateChromeShadowPath()
     }
 
     func endResize(with event: NSEvent) {
@@ -529,6 +556,7 @@ final class StatusConsole: NSPanel {
         let size = currentSize()
         let origin = clampedOrigin(frame.origin)
         setFrame(NSRect(origin: origin, size: size), display: true)
+        updateChromeShadowPath()
         persistOrigin(origin)
         persistSize(size)
         if candidateAnchor == .console {
