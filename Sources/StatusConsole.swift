@@ -1,5 +1,22 @@
 import Cocoa
 
+/// Output mode: Traditional vs Simplified Chinese characters.
+enum OutputMode: String {
+    case traditional
+    case simplified
+
+    var label: String {
+        switch self {
+        case .traditional: return "繁"
+        case .simplified: return "簡"
+        }
+    }
+
+    mutating func toggle() {
+        self = (self == .traditional) ? .simplified : .traditional
+    }
+}
+
 /// Digit source for CKC codes: numpad (default) vs top number-row (laptop fallback).
 enum DigitSource: String {
     case numpad
@@ -40,28 +57,34 @@ enum DigitSource: String {
 }
 
 /// Compact modern floating status strip (vibrancy HUD).
-/// Shows logo · 繁 · digit-source toggle (小鍵盤/鍵盤).
+/// Shows logo · 繁/簡 · digit-source toggle (小鍵盤/鍵盤).
 /// Drag empty chrome / labels to reposition; buttons keep normal clicks.
 final class StatusConsole: NSPanel {
     static let shared = StatusConsole()
 
     private(set) var digitSource: DigitSource = .numpad {
-        didSet { refreshLabels(); UserDefaults.standard.set(digitSource.rawValue, forKey: Self.prefKey) }
+        didSet { refreshLabels(); UserDefaults.standard.set(digitSource.rawValue, forKey: Self.digitSourceKey) }
+    }
+
+    private(set) var outputMode: OutputMode = .traditional {
+        didSet { refreshLabels(); UserDefaults.standard.set(outputMode.rawValue, forKey: Self.outputModeKey) }
     }
 
     var onDigitSourceChanged: ((DigitSource) -> Void)?
+    var onOutputModeChanged: ((OutputMode) -> Void)?
 
-    private static let prefKey = "ckc.digitSource"
+    private static let digitSourceKey = "ckc.digitSource"
+    private static let outputModeKey = "ckc.outputMode"
     private static let originXKey = "ckc.statusConsole.originX"
     private static let originYKey = "ckc.statusConsole.originY"
 
     private var effectView: NSVisualEffectView!
     private var chromeView: ChromeView!
     private var sourceButton: NSButton!
-    private var titleLabel: NSTextField!
+    private var outputModeButton: NSButton!
     private let cornerRadius: CGFloat = 12
     private let stripHeight: CGFloat = 26
-    private let stripWidth: CGFloat = 118
+    private let stripWidth: CGFloat = 140
 
     private var dragStartMouse: NSPoint?
     private var dragStartOrigin: NSPoint?
@@ -89,9 +112,14 @@ final class StatusConsole: NSPanel {
         isMovable = false
         isMovableByWindowBackground = false
 
-        if let raw = UserDefaults.standard.string(forKey: Self.prefKey),
+        if let raw = UserDefaults.standard.string(forKey: Self.digitSourceKey),
            let saved = DigitSource(rawValue: raw) {
             digitSource = saved
+        }
+
+        if let raw = UserDefaults.standard.string(forKey: Self.outputModeKey),
+           let saved = OutputMode(rawValue: raw) {
+            outputMode = saved
         }
 
         buildUI()
@@ -126,9 +154,12 @@ final class StatusConsole: NSPanel {
         logo.font = NSFont.systemFont(ofSize: 11, weight: .bold)
         logo.textColor = .controlAccentColor
 
-        titleLabel = NSTextField(labelWithString: "繁")
-        titleLabel.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
-        titleLabel.textColor = .secondaryLabelColor
+        outputModeButton = NSButton(title: outputMode.label, target: self, action: #selector(toggleOutputMode(_:)))
+        outputModeButton.bezelStyle = .rounded
+        outputModeButton.controlSize = .mini
+        outputModeButton.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
+        outputModeButton.setButtonType(.momentaryPushIn)
+        outputModeButton.setContentHuggingPriority(.required, for: .horizontal)
 
         sourceButton = NSButton(title: digitSource.label, target: self, action: #selector(toggleSource(_:)))
         sourceButton.bezelStyle = .rounded
@@ -137,7 +168,7 @@ final class StatusConsole: NSPanel {
         sourceButton.setButtonType(.momentaryPushIn)
         sourceButton.setContentHuggingPriority(.required, for: .horizontal)
 
-        let stack = NSStackView(views: [logo, titleLabel, sourceButton])
+        let stack = NSStackView(views: [logo, outputModeButton, sourceButton])
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 4
@@ -166,6 +197,12 @@ final class StatusConsole: NSPanel {
         NSLog("[CKC] digitSource → %@", digitSource.rawValue)
     }
 
+    @objc private func toggleOutputMode(_ sender: Any?) {
+        outputMode.toggle()
+        onOutputModeChanged?(outputMode)
+        NSLog("[CKC] outputMode → %@", outputMode.rawValue)
+    }
+
     func toggleDigitSource() {
         digitSource.toggle()
         onDigitSourceChanged?(digitSource)
@@ -178,6 +215,7 @@ final class StatusConsole: NSPanel {
 
     private func refreshLabels() {
         sourceButton?.title = digitSource.label
+        outputModeButton?.title = outputMode.label
     }
 
     private func applyAppearance() {
