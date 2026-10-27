@@ -788,6 +788,12 @@ private final class CandidateRowView: NSView {
         onClicked?()
     }
 
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        guard !isHidden, !textLabel.stringValue.isEmpty else { return }
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
     func configure(label: String, text: String, selected: Bool, labelWidth: CGFloat = 16) {
         self.selected = selected
         numberLabel.stringValue = label
@@ -804,5 +810,6 @@ private final class CandidateRowView: NSView {
             textLabel.textColor = .labelColor
             textLabel.font = NSFont.systemFont(ofSize: 15, weight: .medium)
         }
+        window?.invalidateCursorRects(for: self)
     }
 }
