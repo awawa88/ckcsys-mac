@@ -145,7 +145,10 @@ func decide(lex: Lex, buffer: String, look: Look, digit: Int, inactive: Bool) ->
     if shouldAuto() {
         let extended = buffer + String(digit)
         if lex.hasUserCode(withPrefix: extended) {
-            return "COMPOSE_USER_EXTEND '\(extended)'"
+            // fall through to append/compose below
+        } else if digit == 0 && lex.hasCode(withPrefix: extended) {
+            // digit 0 never picks; stock/user extend under 0 must compose (20338+0→203380)
+            // fall through to append/compose below
         } else {
             // enter auto + pick
             look2 = !phrases.isEmpty ? .phrases : .characters
@@ -199,7 +202,7 @@ var look = Look.all
 for d in [0, 6, 1, 7, 7] {
     let r = decide(lex: lex, buffer: buf, look: look, digit: d, inactive: false)
     print("TYPE \(d) @'\(buf)' look=\(look.rawValue) => \(r)")
-    if r.hasPrefix("COMPOSE '") {
+    if r.hasPrefix("COMPOSE '") || r.hasPrefix("COMPOSE_DIGIT0_EXTEND '") || r.hasPrefix("COMPOSE_USER_EXTEND '") {
         if let s = r.split(separator: "'").dropFirst().first {
             buf = String(s)
         }
@@ -225,6 +228,14 @@ let p58834 = lex.phrases("58834")
 check("58834 first phrase 輸入法", p58834.first ?? "", contains: "輸入法")
 // after explicit 選詞 at 5883, digit 1 picks not extend
 check("5883 選詞 +1 picks not extend", decide(lex: lex, buffer: "5883", look: .phrases, digit: 1, inactive: false), contains: "PHRASE_PICK")
+
+// 20338 exact 詞 + stock 203380: digit 0 must compose (never swallow into **)
+print("lex exact[20338]=\(lex.exact["20338"] ?? []) chars=\(lex.chars("20338").count) longer=\(lex.hasLongerCode("20338")) stock203380=\(lex.hasCode(withPrefix: "203380"))")
+print("lex phrases(203380).first=\(lex.phrases("203380").first ?? "?")")
+check("20338+0 compose 終於 path", decide(lex: lex, buffer: "20338", look: .all, digit: 0, inactive: false), contains: "203380")
+check("20338 phrases +0 still compose", decide(lex: lex, buffer: "20338", look: .phrases, digit: 0, inactive: false), contains: "203380")
+check("20338+1 still auto-picks (not compose to 203381)", decide(lex: lex, buffer: "20338", look: .all, digit: 1, inactive: false), contains: "AUTO_PHRASE_PICK")
+check("06177+0 stock-extends still compose if key exists", decide(lex: lex, buffer: "06177", look: .all, digit: 0, inactive: false), contains: "061770")
 
 if failed > 0 {
     fputs("FAILED \(failed) checks\n", stderr)

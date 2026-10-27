@@ -958,8 +958,14 @@ class CKCInputController: IMKInputController {
                     let extended = buffer + String(digit)
                     // Only a *user* longer code under this digit keeps composing (5883+4→輸入法).
                     // Stock longer keys (06177+1→061771) must NOT skip: enter 選詞 and pick.
+                    // Exception: digit 0 never picks (1–9 only). If stock/user has a key under
+                    // this 0, keep composing so 20338+0 → 203380 (終於) instead of swallowing
+                    // into marked 20338** with no way to reach the longer code.
                     if DictionaryStore.shared.hasUserCode(withPrefix: extended) {
                         ckcLog("auto-select skipped; user digit extends '\(extended)' exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0) userLonger=\(DictionaryStore.shared.hasLongerUserCode(for: buffer) ? 1 : 0)")
+                        // fall through to append
+                    } else if digit == 0 && DictionaryStore.shared.hasCode(withPrefix: extended) {
+                        ckcLog("auto-select skipped; digit 0 stock-extends '\(extended)' exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0)")
                         // fall through to append
                     } else {
                         ckcLog("auto-phrase-pick buffer=\(buffer) digit=\(digit) exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0) userLonger=\(DictionaryStore.shared.hasLongerUserCode(for: buffer) ? 1 : 0) stockExtends=\(DictionaryStore.shared.hasCode(withPrefix: extended) ? 1 : 0)")
@@ -981,7 +987,7 @@ class CKCInputController: IMKInputController {
                                 }
                             }
                         }
-                        // digit 0 or out-of-range: stay in select mode (marked * / **)
+                        // digit 0 with no lexicon extension, or out-of-range: stay in select mode
                         ensureStatusConsoleVisible(near: sender)
                         updateUI(client: sender)
                         return true

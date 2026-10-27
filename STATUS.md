@@ -1,3 +1,17 @@
+## Local 0.2.31 (build 33) — trailing 0 not swallowed into **
+
+### Bug
+Typing `203380` showed marked `20338**` — final `0` missing.
+
+### Root cause
+At `20338` (exact 詞 編定/將進入, no 字, stock longer keys `203380`…), `shouldAutoSelectMode()` arms 選詞. Digits **1–9** intentionally pick (06177→自己) and do not compose over stock longer keys. Digit **0** never picks, but the auto-phrase path still entered select mode and `return true` without appending — so `20338+0` became `20338**` and could not reach `203380` (終於).
+
+### Fix
+In `CKCInputController` auto-select gate: if `digit == 0` and `hasCode(withPrefix: buffer+"0")`, fall through and compose (same as user-longer extend). Digits 1–9 unchanged. Prove script covers `20338+0 → 203380` and still `20338+1 → AUTO_PHRASE_PICK`.
+
+### Install
+Local only — do not push/publish unless asked.
+
 ## Local 0.2.30 (build 32) — 縱 LED blue + 3D chrome press
 
 Ask: 縱 on/off should read as LED blue at two brightnesses (not gray-only off); every
