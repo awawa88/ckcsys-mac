@@ -561,6 +561,17 @@ final class DictionaryStore {
         return keys.contains { $0.count > code.count }
     }
 
+    /// True when a **user-added** phrase key is strictly longer than `code` and shares
+    /// that prefix. Stock longer keys (e.g. 061770 under 06177) do NOT count — only
+    /// userExact overrides shorter auto-選詞 (Andrew 0.2.25).
+    func hasLongerUserCode(for code: String) -> Bool {
+        guard !code.isEmpty else { return true }
+        for key in userExact.keys where key.count > code.count && key.hasPrefix(code) {
+            return true
+        }
+        return false
+    }
+
     /// True when any user/system key equals `prefix` or starts with it (prefix index hit).
     /// Used so a digit that continues a longer code (5883+4 → 58834) appends instead of
     /// being treated as a 選詞/選字 pick after auto-select locked on a shorter exact 詞.
@@ -571,8 +582,8 @@ final class DictionaryStore {
     }
 
     /// True when `code` itself has at least one multi-character (詞) entry in user or system lexicon.
-    /// Used for logging / diagnostics. Auto-選詞 no longer keys off this when hasLongerCode
-    /// is true — longer codes override shorter exact-詞 auto-shortlist (see shouldAutoSelectMode).
+    /// Auto-選詞 uses this when stock longer keys exist but no user longer code
+    /// (e.g. 06177 → 自己). User longer codes override via hasLongerUserCode.
     func hasExactPhrase(for code: String) -> Bool {
         guard !code.isEmpty else { return false }
         if let userHits = userExact[code], userHits.contains(where: { $0.count >= 2 }) {

@@ -1,5 +1,33 @@
 # Ckcsys macOS IMK — STATUS
 
+Time: 2026-10-27 13:20 Asia/Hong_Kong (UTC+8)
+Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
+
+## Local 0.2.25 (build 27) — restore auto phrases; user-longer override only
+
+Ask (t253u/t254u): `06177`→自己 auto-選詞 broken after 0.2.24 ("no auto phases").
+
+Root cause: 0.2.24 made `shouldAutoSelectMode` return false whenever `hasLongerCode(buffer)`. Stock lexicon has longer keys under `06177` (061770/061771/061777), so auto for 自己 never fired. That gate was too broad.
+
+Fix:
+- `DictionaryStore.hasLongerUserCode(for:)` — only userExact keys longer than the buffer.
+- `shouldAutoSelectMode`: user-longer → no auto; else dead-end auto (`!hasLongerCode`); else restore exact-詞/no-字 auto (06177→自己) even when stock longer keys exist.
+- Keep 0.2.22 `hasCode(withPrefix:)` compose-over-pick for any longer prefix (stock or user).
+- Ranking unchanged: `candidates()` puts userExact first at the exact code (58834→輸入法).
+
+Install path (ONLY): `~/Library/Input Methods/Ckcsys.app`
+No GitHub push/merge/release.
+
+Retest:
+1. `06177` → auto 選詞 / ` **`, phrases include 自己
+2. `5883` with user `58834`→輸入法 → no auto shortlist; T/× → 中等／責令
+3. `58834` → 輸入法 first
+4. `00259` dead-end + `1` → 像素
+
+---
+
+# Ckcsys macOS IMK — STATUS
+
 Time: 2026-10-27 13:15 Asia/Hong_Kong (UTC+8)
 Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
 

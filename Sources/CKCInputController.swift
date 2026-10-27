@@ -8,9 +8,10 @@ import Carbon.HIToolbox
 /// After committing any single 字: show 聯想 phrases starting with that char; digit picks need 選詞 first
 /// (選詞 also sets marked caret " **" like normal phrase mode).
 /// Association commit inserts only the suffix after the seed (already in the document).
-/// Auto 選詞/選字 (marked **/ *) only at a dead-end (!hasLongerCode).
-/// If any longer user/stock code exists under the buffer (e.g. 58834 under 5883),
-/// do NOT auto-shortlist shorter exact 詞 — require explicit 選詞 (T/×). Else keep appending.
+/// Auto 選詞/選字 (marked **/ *) at a dead-end (!hasLongerCode), OR exact-詞 with no 字
+/// left even if stock longer keys exist (e.g. 06177 → 自己). Only a **user-added** longer
+/// phrase under the buffer (hasLongerUserCode) overrides shorter auto-選詞 — require T/×
+/// (e.g. user 58834 → at 5883 no auto). Stock longer keys alone do not block auto.
 /// DigitSource flips only via Caps Lock / StatusConsole (never on digit keys).
 /// Active DigitSource gates compose + candidate pick: numpad mode accepts only numpad digits;
 /// number-row mode accepts only number-row digits. Inactive-row digits never flip mode and
@@ -911,8 +912,8 @@ class CKCInputController: IMKInputController {
                     ckcLog("digit \(digit) atMaxCode swallowed source=\(digitInfo.source.rawValue)")
                     return true
                 }
-                // Auto-select gate: dead-end only (!hasLongerCode). Longer codes under
-                // the buffer (user or stock) override shorter exact-詞 auto-shortlist.
+                // Auto-select gate: dead-end, or exact-詞/no-字 (06177). Only user-added
+                // longer phrases under the buffer override shorter auto-選詞.
                 // Same keystroke must enter mode AND pick — never leave user with only **.
                 // Refresh both columns so the gate sees 字/詞 counts correctly.
                 lookKind = .all
@@ -921,10 +922,10 @@ class CKCInputController: IMKInputController {
                     let extended = buffer + String(digit)
                     if DictionaryStore.shared.hasCode(withPrefix: extended) {
                         // e.g. buffer 5883 + digit 4 → 58834 exists; keep composing
-                        ckcLog("auto-select skipped; digit extends '\(extended)' exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0)")
+                        ckcLog("auto-select skipped; digit extends '\(extended)' exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0) userLonger=\(DictionaryStore.shared.hasLongerUserCode(for: buffer) ? 1 : 0)")
                         // fall through to append
                     } else {
-                        ckcLog("auto-phrase-no-extension buffer=\(buffer) digit=\(digit) exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0)")
+                        ckcLog("auto-phrase-no-extension buffer=\(buffer) digit=\(digit) exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0) userLonger=\(DictionaryStore.shared.hasLongerUserCode(for: buffer) ? 1 : 0)")
                         enterAutoSelectMode()
                         syncCandidateWindow(near: sender)
                         updateMarked(client: sender)
@@ -954,11 +955,11 @@ class CKCInputController: IMKInputController {
                 selectedIndex = 0
                 lookKind = .all
                 refreshCandidates()
-                // Auto-enter 選詞/選字 immediately when gate matches (dead-end only).
-                // Shorter exact 詞 under a longer prefix need explicit 選詞 (T/×).
+                // Auto-enter 選詞/選字 when gate matches (dead-end or exact-詞/no-字).
+                // User-longer under the prefix still needs explicit 選詞 (T/×).
                 if shouldAutoSelectMode() {
                     enterAutoSelectMode()
-                    ckcLog("auto-select-enter buffer=\(buffer) mode=\(lookKind == .phrases ? "phrases" : "characters") chars=\(charCandidates.count) phrases=\(phraseCandidates.count) exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0)")
+                    ckcLog("auto-select-enter buffer=\(buffer) mode=\(lookKind == .phrases ? "phrases" : "characters") chars=\(charCandidates.count) phrases=\(phraseCandidates.count) exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0) userLonger=\(DictionaryStore.shared.hasLongerUserCode(for: buffer) ? 1 : 0)")
                 } else if buffer.count >= 6 && !phraseCandidates.isEmpty {
                     // Full 6-digit with phrases: focus 詞 (Windows-style)
                     lookKind = .phrases
@@ -997,17 +998,25 @@ class CKCInputController: IMKInputController {
 
 
     /// Whether the current buffer should lock into 選詞/選字 without T/Y.
-    /// Only at a dead-end: no longer lexicon/user keys under this buffer.
-    /// Saving (or stocking) a longer code that shares a shorter exact-詞 prefix
-    /// overrides auto-shortlist at that shorter prefix — user must press 選詞 (T/×)
-    /// to see 中等/責令 at 5883 so digits can still reach 58834 → 輸入法.
+    /// - Dead-end (!hasLongerCode): any candidates → auto.
+    /// - Exact 詞 with zero 字 left (e.g. 06177 → 自己) even if stock longer keys
+    ///   like 061771 exist — digits then pick / compose-over-pick via hasCode(withPrefix:).
+    /// - User-added longer phrase under the buffer (hasLongerUserCode) overrides:
+    ///   at 5883 with user 58834→輸入法, no auto shortlist; need T/× for 中等/責令.
     private func shouldAutoSelectMode() -> Bool {
         guard !buffer.isEmpty, !buffer.contains("?") else { return false }
-        // Longer code exists → keep composing; shorter exact 詞 need explicit 選詞.
-        if DictionaryStore.shared.hasLongerCode(for: buffer) {
+        // User longer phrase under this prefix → keep composing; shorter exact 詞 need T/×.
+        if DictionaryStore.shared.hasLongerUserCode(for: buffer) {
             return false
         }
-        return !phraseCandidates.isEmpty || !charCandidates.isEmpty
+        // Dead-end: no longer keys at all → auto if any candidates.
+        if !DictionaryStore.shared.hasLongerCode(for: buffer) {
+            return !phraseCandidates.isEmpty || !charCandidates.isEmpty
+        }
+        // Stock longer keys only: restore exact-詞 auto (06177 → 自己).
+        return DictionaryStore.shared.hasExactPhrase(for: buffer)
+            && charCandidates.isEmpty
+            && !phraseCandidates.isEmpty
     }
 
     /// Prefer 選詞 when phrases exist; else 選字. Assumes candidates already refreshed (.all).
