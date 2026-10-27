@@ -80,6 +80,8 @@ final class StatusConsole: NSPanel {
 
     private var effectView: NSVisualEffectView!
     private var chromeView: ChromeView!
+    /// Clipped rounded container (cornerRadius + masksToBounds). Border lives here.
+    private var containerView: NSView!
     private var sourceButton: NSButton!
     private var outputModeButton: NSButton!
     private let cornerRadius: CGFloat = 12
@@ -127,7 +129,8 @@ final class StatusConsole: NSPanel {
     }
 
     private func buildUI() {
-        // Single container with rounded mask - no borders or stacked radii
+        // Single container with rounded mask. Border is applied in applyAppearance()
+        // on this same clipped layer so no sharp light corners escape the round rect.
         let container = NSView(frame: NSRect(x: 0, y: 0, width: stripWidth, height: stripHeight))
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.clear.cgColor
@@ -178,19 +181,23 @@ final class StatusConsole: NSPanel {
         ])
 
         container.addSubview(effectView)
-        
-        // Wrap in ChromeView for drag support
+        containerView = container
+
+        // Wrap in ChromeView for drag support. Shadow lives on chromeView
+        // (masksToBounds must stay false so the glow can extend outside).
         chromeView = ChromeView(frame: container.bounds)
         chromeView.panel = self
         chromeView.autoresizingMask = [.width, .height]
         chromeView.wantsLayer = true
         chromeView.layer?.backgroundColor = NSColor.clear.cgColor
+        chromeView.layer?.masksToBounds = false
         chromeView.addSubview(container)
         container.autoresizingMask = [.width, .height]
-        
+
         contentView = chromeView
         contentView?.wantsLayer = true
         contentView?.layer?.backgroundColor = NSColor.clear.cgColor
+        contentView?.layer?.masksToBounds = false
         applyAppearance()
         refreshLabels()
     }
@@ -226,6 +233,31 @@ final class StatusConsole: NSPanel {
         let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         effectView.appearance = NSApp.effectiveAppearance
         effectView.material = dark ? .hudWindow : .popover
+
+        // Soft layer glow on outer chrome (not NSPanel.hasShadow — that leaks black corners).
+        // Thin border on the clipped rounded container so the edge reads as a "shadow border".
+        if let chromeLayer = chromeView?.layer {
+            chromeLayer.masksToBounds = false
+            chromeLayer.shadowOffset = .zero
+            chromeLayer.shadowRadius = dark ? 10 : 8
+            if dark {
+                chromeLayer.shadowColor = NSColor.white.cgColor
+                chromeLayer.shadowOpacity = 0.50
+            } else {
+                chromeLayer.shadowColor = NSColor.black.cgColor
+                chromeLayer.shadowOpacity = 0.28
+            }
+        }
+        if let containerLayer = containerView?.layer {
+            containerLayer.cornerRadius = cornerRadius
+            containerLayer.masksToBounds = true
+            containerLayer.borderWidth = 0.75
+            if dark {
+                containerLayer.borderColor = NSColor.white.withAlphaComponent(0.42).cgColor
+            } else {
+                containerLayer.borderColor = NSColor.black.withAlphaComponent(0.22).cgColor
+            }
+        }
     }
 
     // MARK: - Position (default / persist / clamp)
