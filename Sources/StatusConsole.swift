@@ -142,7 +142,7 @@ final class StatusConsole: NSPanel {
     private static let maxStripWidth: CGFloat = 420
     /// Floor/ceiling wide enough for Default and Large menu-bar text without clipping.
     /// Floor tracks chrome around raised buttons (see preferredStripHeight).
-    private static let minStripHeight: CGFloat = 26
+    private static let minStripHeight: CGFloat = 28
     private static let maxStripHeight: CGFloat = 56
 
     /// Live size (persisted). Width-first resize; height optional within tight bounds.
@@ -214,7 +214,7 @@ final class StatusConsole: NSPanel {
 
     private static let heightChromeKey = "ckc.statusConsole.heightChrome"
     /// Bump when default vertical chrome changes so older taller persisted heights reset.
-    private static let heightChromeToken = "tight-0.2.33"
+    private static let heightChromeToken = "tight-0.2.34"
 
     private static func loadPersistedHeight() -> CGFloat {
         let defaults = UserDefaults.standard
@@ -238,10 +238,10 @@ final class StatusConsole: NSPanel {
     }
 
     /// Strip height from live menu-bar metrics + chrome above/below buttons.
-    /// Middle ground: was +14 (roomy) then +8 (too tight); +10 gives a little air without the old tall strip.
+    /// Middle ground: was +14 (roomy) then +8 (too tight); +12 is one step up from +10 without full old height.
     private static func preferredStripHeight(for font: NSFont = NSFont.menuBarFont(ofSize: 0)) -> CGFloat {
         let line = ceil(font.ascender - font.descender + font.leading)
-        let raw = line + 10
+        let raw = line + 12
         return min(max(raw, minStripHeight), maxStripHeight)
     }
 
