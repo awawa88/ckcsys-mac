@@ -5,7 +5,8 @@ import Carbon.HIToolbox
 /// CKC / Ckcsys IMK controller.
 /// Digit entry builds the composition code (max 6). Two-column CandidateWindow: chars | phrases.
 /// T/* = 詞 then 1–9 pick; Y// = 字 then 1–9 pick; −/= page; Space commit.
-/// After committing any single 字: show 聯想 phrases starting with that char; digit picks need 選詞 first.
+/// After committing any single 字: show 聯想 phrases starting with that char; digit picks need 選詞 first
+/// (選詞 also sets marked caret " **" like normal phrase mode).
 /// Auto 選詞/選字 (marked **/ *) when dead-end (!hasLongerCode) OR exact-詞 with no 字 left
 /// (e.g. 06177 → ** then 1 → 自己) even if longer keys exist. Else keep appending.
 /// DigitSource flips only via Caps Lock / StatusConsole (never on digit keys).
@@ -544,6 +545,7 @@ class CKCInputController: IMKInputController {
             isBareSlash
 
         // Association 選詞: idle after 字 commit — T / × arms digit picks (does not steal digits before this).
+        // Mirror normal phrase-mode caret mark: empty buffer + " **" via updateMarked.
         if !composing && !punctMode && hasAssociation && isPhraseEndKey && !blocked {
             associationPickEnabled = true
             lookKind = .phrases
@@ -551,7 +553,8 @@ class CKCInputController: IMKInputController {
             charCandidates = []
             selectedIndex = 0
             showAssociationWindow(client: sender)
-            ckcLog("association 選詞 armed seed='\(associationSeed)' phrases=\(associationPhrases.count)")
+            updateMarked(client: sender)
+            ckcLog("association 選詞 armed seed='\(associationSeed)' phrases=\(associationPhrases.count) marked=' **'")
             return true
         }
 
@@ -1151,6 +1154,7 @@ class CKCInputController: IMKInputController {
     private var hasAssociation: Bool { !associationPhrases.isEmpty }
 
     private func clearAssociation(hideWindow: Bool = true) {
+        let wasArmed = associationPickEnabled
         associationSeed = ""
         associationPhrases = []
         associationPickEnabled = false
@@ -1162,6 +1166,12 @@ class CKCInputController: IMKInputController {
                 lookKind = .all
                 selectedIndex = 0
                 CandidateWindow.shared.hide()
+            }
+            // Drop caret " **" left by association 選詞 arm (commit/clearComposition already clear).
+            if wasArmed {
+                if let client = currentClient as? IMKTextInput {
+                    client.setMarkedText("", selectionRange: NSRange(location: 0, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
+                }
             }
         }
     }

@@ -1,5 +1,29 @@
 # Ckcsys macOS IMK — STATUS
 
+Time: 2026-10-27 12:20 Asia/Hong_Kong (UTC+8)
+Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
+
+## Local 0.2.19 (build 21) — association 選詞 shows marked ` **` at caret
+
+Keeps 0.2.18 聯想 after any 字 + pick only after 選詞. Fix: when guesses are visible and user presses 選詞 (T / ×), the **text-field marked composition** now shows ` **` (same as normal phrase mode), not only CandidateWindow chrome `字 **`.
+
+Behavior:
+1. Commit 字 → guess list (聯想) still appears; digits without 選詞 still dismiss guesses and start a fresh code.
+2. 選詞 (T / ×) arms picks **and** sets marked caret to ` **` via `updateMarked` (empty buffer + lookKind=.phrases).
+3. Digit / Space after 選詞 still picks a phrase. Esc / Backspace / unarmed dismiss clears the caret mark.
+4. Candidate chrome still shows `字 **` when armed.
+
+Retest:
+- Commit 習 → guess list → press T or × → caret shows ` **` → digit picks phrase.
+- Commit 習 → digit without T/× → new code (no forced pick; no leftover ` **`).
+
+Install path (ONLY): `~/Library/Input Methods/Ckcsys.app`
+No GitHub push/merge/release.
+
+---
+
+# Ckcsys macOS IMK — STATUS
+
 Time: 2026-10-27 12:15 Asia/Hong_Kong (UTC+8)
 Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
 
