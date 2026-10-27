@@ -771,7 +771,13 @@ class CKCInputController: IMKInputController {
     private func updateUI(client: Any?) {
         let clientObj = (client as AnyObject?) ?? currentClient
         updateMarked(client: clientObj)
-        updateCandidateWindow(client: clientObj)
+        // Defer candidate positioning to next run loop after setMarkedText.
+        // Chrome/Docs returns invalid (near 0,0) lineHeightRectangle when queried
+        // immediately after setMarkedText; client needs layout cycle to update.
+        // Fix from Rime Squirrel PR #1126 (merged): https://github.com/rime/squirrel/pull/1126
+        DispatchQueue.main.async { [weak self] in
+            self?.updateCandidateWindow(client: clientObj)
+        }
     }
 
     private func updateMarked(client: Any?) {

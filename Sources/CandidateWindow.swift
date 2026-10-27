@@ -136,34 +136,32 @@ final class CandidateWindow: NSPanel {
     }
 
     private func buildUI() {
-        effectView = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: panelWidthBoth, height: 120))
-        effectView.material = .hudWindow
-        effectView.blendingMode = .behindWindow
-        // IME is LSUIElement / never key — followsWindowActiveState washes out the HUD.
-        effectView.state = .active
-        effectView.wantsLayer = true
-        effectView.clipsToBounds = true
-        effectView.layer?.cornerRadius = cornerRadius
-        effectView.layer?.masksToBounds = true
-        effectView.layer?.borderWidth = 0.5
-        effectView.layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
-
-        let container = NSView(frame: effectView.bounds)
+        // Single container with rounded mask - no borders or multiple radii stacking
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: panelWidthBoth, height: 120))
         container.wantsLayer = true
         container.layer?.backgroundColor = NSColor.clear.cgColor
         container.layer?.cornerRadius = cornerRadius
-        container.layer?.masksToBounds = false
-        container.layer?.shadowColor = NSColor.black.cgColor
-        container.layer?.shadowOpacity = 0.35
-        container.layer?.shadowRadius = 20
-        container.layer?.shadowOffset = CGSize(width: 0, height: -3)
-        container.autoresizingMask = [.width, .height]
+        container.layer?.masksToBounds = true
+        
+        // EffectView fills container exactly, inheriting the clip
+        effectView = NSVisualEffectView(frame: container.bounds)
+        effectView.material = .hudWindow
+        effectView.blendingMode = .behindWindow
+        effectView.state = .active
+        effectView.wantsLayer = true
+        // No separate cornerRadius or border on effectView - container clips it
+        effectView.layer?.backgroundColor = NSColor.clear.cgColor
         effectView.autoresizingMask = [.width, .height]
+        
         container.addSubview(effectView)
+        container.autoresizingMask = [.width, .height]
+        
+        contentView = container
+        contentView?.wantsLayer = true
+        contentView?.layer?.backgroundColor = NSColor.clear.cgColor
 
         // Composition digits stay in the client marked text only — not duplicated here.
         pageLabel = NSTextField(labelWithString: "")
-        pageLabel.font = NSFont.systemFont(ofSize: 11, weight: .regular)
         pageLabel.textColor = .tertiaryLabelColor
         pageLabel.alignment = .right
 
@@ -253,10 +251,6 @@ final class CandidateWindow: NSPanel {
             leftColumnBox.widthAnchor.constraint(equalToConstant: charColWidth),
             rightColumnBox.widthAnchor.constraint(greaterThanOrEqualToConstant: phraseColWidth - 40),
         ])
-
-        contentView = container
-        contentView?.wantsLayer = true
-        contentView?.layer?.backgroundColor = NSColor.clear.cgColor
     }
 
     private func wrapColumn(_ stack: NSStackView, title: String, minWidth: CGFloat, titleOut: inout NSTextField!) -> NSView {
@@ -676,7 +670,7 @@ final class CandidateWindow: NSPanel {
         let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         effectView.appearance = NSApp.effectiveAppearance
         effectView.material = dark ? .hudWindow : .popover
-        effectView.layer?.borderColor = (dark ? NSColor.white.withAlphaComponent(0.14) : NSColor.black.withAlphaComponent(0.08)).cgColor
+        // No border — container cornerRadius + masksToBounds clips cleanly (PR #7)
     }
 
     private func position(near client: AnyObject?) {
