@@ -747,6 +747,7 @@ private final class CandidateRowView: NSView {
     private var selected = false
     private var labelWidthConstraint: NSLayoutConstraint!
     var onClicked: (() -> Void)?
+    private var trackingArea: NSTrackingArea?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -776,9 +777,29 @@ private final class CandidateRowView: NSView {
             textLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
             textLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
+
+        setupTrackingArea()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:)") }
+
+    private func setupTrackingArea() {
+        if let existing = trackingArea {
+            removeTrackingArea(existing)
+        }
+        trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .cursorUpdate, .activeInActiveApp],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea!)
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        setupTrackingArea()
+    }
 
     override func mouseDown(with event: NSEvent) {
         guard !isHidden, !textLabel.stringValue.isEmpty else {
@@ -788,10 +809,22 @@ private final class CandidateRowView: NSView {
         onClicked?()
     }
 
-    override func resetCursorRects() {
-        super.resetCursorRects()
-        guard !isHidden, !textLabel.stringValue.isEmpty else { return }
-        addCursorRect(bounds, cursor: .pointingHand)
+    override func cursorUpdate(with event: NSEvent) {
+        if !isHidden && !textLabel.stringValue.isEmpty {
+            NSCursor.pointingHand.set()
+        } else {
+            NSCursor.arrow.set()
+        }
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        if !isHidden && !textLabel.stringValue.isEmpty {
+            NSCursor.pointingHand.set()
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        NSCursor.arrow.set()
     }
 
     func configure(label: String, text: String, selected: Bool, labelWidth: CGFloat = 16) {
@@ -810,6 +843,5 @@ private final class CandidateRowView: NSView {
             textLabel.textColor = .labelColor
             textLabel.font = NSFont.systemFont(ofSize: 15, weight: .medium)
         }
-        window?.invalidateCursorRects(for: self)
     }
 }
