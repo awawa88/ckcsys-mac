@@ -8,6 +8,9 @@ import Carbon.HIToolbox
 /// Auto 選詞/選字 (marked **/ *) when dead-end (!hasLongerCode) OR exact-詞 with no 字 left
 /// (e.g. 06177 → ** then 1 → 自己) even if longer keys exist. Else keep appending.
 /// DigitSource flips only via Caps Lock / StatusConsole (never on digit keys).
+/// Active DigitSource gates compose + candidate pick: numpad mode accepts only numpad digits;
+/// number-row mode accepts only number-row digits. Inactive-row digits never flip mode —
+/// pass through when idle; swallowed while composing/punct (safer than inserting into marked text).
 @objc(CKCInputController)
 class CKCInputController: IMKInputController {
     private var buffer: String = ""
@@ -604,6 +607,11 @@ class CKCInputController: IMKInputController {
                 return true
             }
             if let digitInfo = classifyDigit(keyCode: keyCode, characters: chars, rawFlags: rawFlags), !blocked {
+                // Active DigitSource only — inactive row must not pick 標點 or flip mode.
+                if digitInfo.source != StatusConsole.shared.digitSource {
+                    ckcLog("digit \(digitInfo.value) IGNORE inactive (punct) src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue)")
+                    return true
+                }
                 // Pure punct mode: 1–9 (and 0) choose the mark — never wildcard-continue.
                 let d = digitInfo.value
                 let page = pages[max(0, min(punctPageIndex, pages.count - 1))]
@@ -744,11 +752,24 @@ class CKCInputController: IMKInputController {
         // Digits: after Y// → pick 字; after T/* → pick 詞;
         // at 6 digits → 1–9 pick 詞 directly (no T/* needed);
         // at any length, if no longer lexicon codes remain → auto 選詞 + digit pick;
-        // else compose from either DigitSource.
+        // else compose — but only from the active DigitSource.
         if let digitInfo = classifyDigit(keyCode: keyCode, characters: chars, rawFlags: rawFlags) {
             let digit = digitInfo.value
             let pickModifiers = flags.contains(.option) || flags.contains(.control)
             let atMaxCode = buffer.count >= 6
+
+            // Mode gate: only the active physical row feeds compose / candidate pick.
+            // Never auto-switch DigitSource (sticky since 0.2.14/0.2.15).
+            // Idle → pass through so the app gets a normal typed digit;
+            // composing or punct → swallow (return true) so marked text is not polluted.
+            if digitInfo.source != StatusConsole.shared.digitSource {
+                let reason = (composing || punctMode) ? "swallow" : "passthrough"
+                ckcLog("digit \(digit) IGNORE inactive (\(reason)) src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue) composing=\(composing ? 1 : 0) punct=\(punctMode ? 1 : 0)")
+                if composing || punctMode {
+                    return true
+                }
+                return false
+            }
 
             if digit >= 1 && digit <= 9 && hasCandidates && flags.isEmpty {
                 // Full 6-digit code: 1–9 commits phrase (Windows-style; no T/* required)
@@ -799,10 +820,9 @@ class CKCInputController: IMKInputController {
                 return true
             }
 
-            // Composition digit — either numpad or number-row when no modifiers; never a 7th digit.
-            // Keep DigitSource sticky: do not auto-flip mode when the digit arrives from the other
-            // physical row. Caps Lock / StatusConsole toggle remain the only intentional switches
-            // (標點 key + column headers ÷/× vs Y/T).
+            // Composition digit from the active DigitSource only (gated above); never a 7th digit.
+            // DigitSource stays sticky: inactive-row digits never reach here. Caps Lock /
+            // StatusConsole toggle remain the only intentional switches (標點 + ÷/× vs Y/T).
             if flags.isEmpty {
                 if punctMode {
                     exitPunctMode()
@@ -865,7 +885,7 @@ class CKCInputController: IMKInputController {
                 return true
             }
 
-            // Modifiers block compose → pass through (Shift etc.); source mismatch no longer rejects.
+            // Modifiers block compose → pass through (Shift etc.). Source mismatch already gated above.
             ckcLog("digit \(digit) REJECTED (modifiers) src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue) flags=0x\(String(flags.rawValue, radix: 16))")
             return false
         }

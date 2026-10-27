@@ -1,5 +1,30 @@
 # Ckcsys macOS IMK — STATUS
 
+Time: 2026-10-27 12:05 Asia/Hong_Kong (UTC+8)
+Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
+
+## Local 0.2.16 (build 18) — DigitSource gates compose (one active row)
+
+Andrew rejected 0.2.15 “both numpad and number-row always compose regardless of mode.”
+
+Behavior:
+1. DigitSource still sticky — digits from the other physical row never call `setDigitSource` (Caps Lock / StatusConsole only).
+2. Mode gates compose + candidate pick:
+   - Numpad mode → only numpad digits (and designed pad special/選字/選詞 keys) feed codes / picks.
+   - Number-row mode → only main number-row digits feed codes / picks.
+3. Inactive-row digits: no buffer append, no mode flip. Idle → `return false` (pass through as typed `1`/`2`/…). Composing or 標點 → `return true` (swallow; safer than inserting into marked text).
+4. Auto 選詞 / `06177` → ` **` → `1` → 自己 still works for **active-source** digits only. Punct 1–9 pick also gated.
+
+Retest:
+- Numpad mode: numpad `06177` + `1` → 自己; top-row `1` does not append/switch (passthrough or ignore).
+- Number-row mode: top-row digits compose; numpad digits do not flip mode or compose.
+- Caps Lock / console still toggles mode and headers (÷× vs Y/T).
+
+Install path (ONLY): `~/Library/Input Methods/Ckcsys.app`
+No GitHub push/merge/release.
+
+---
+
 Time: 2026-10-27 11:55 Asia/Hong_Kong (UTC+8)
 Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
 
