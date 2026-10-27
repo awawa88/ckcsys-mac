@@ -843,26 +843,42 @@ class CKCInputController: IMKInputController {
                     }
                     return true
                 }
+                // If this digit continues a longer lexicon/user code (e.g. 5883+4 → 58834
+                // 輸入法), leave 選詞/選字 and compose — do not treat it as candidate pick.
+                let extended = buffer + String(digit)
+                let digitExtendsCode = !buffer.isEmpty
+                    && DictionaryStore.shared.hasCode(withPrefix: extended)
                 // Phrase filter (T / * / auto-選詞): 1–9 commits phrase — never only toggle **
                 if lookKind == .phrases {
-                    syncCandidateWindow(near: sender)
-                    if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
-                        commit(text, client: sender)
+                    if digitExtendsCode {
+                        ckcLog("phrase-mode digit=\(digit) extends '\(extended)' → compose")
+                        lookKind = .all
+                        // fall through to compose below
+                    } else {
+                        syncCandidateWindow(near: sender)
+                        if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
+                            commit(text, client: sender)
+                            return true
+                        }
                         return true
                     }
-                    return true
-                }
-                // Char filter (Y / / / auto-選字): 1–9 commits character
-                if lookKind == .characters {
-                    syncCandidateWindow(near: sender)
-                    if let text = CandidateWindow.shared.selectCharOnPage(digit) {
-                        commit(text, client: sender)
+                } else if lookKind == .characters {
+                    // Char filter (Y / / / auto-選字): 1–9 commits character
+                    if digitExtendsCode {
+                        ckcLog("char-mode digit=\(digit) extends '\(extended)' → compose")
+                        lookKind = .all
+                        // fall through to compose below
+                    } else {
+                        syncCandidateWindow(near: sender)
+                        if let text = CandidateWindow.shared.selectCharOnPage(digit) {
+                            commit(text, client: sender)
+                            return true
+                        }
                         return true
                     }
-                    return true
                 }
                 // At 6 digits with only chars (no phrases): allow char pick
-                if atMaxCode && !charCandidates.isEmpty && phraseCandidates.isEmpty {
+                if lookKind == .all && atMaxCode && !charCandidates.isEmpty && phraseCandidates.isEmpty {
                     syncCandidateWindow(near: sender)
                     if let text = CandidateWindow.shared.selectCharOnPage(digit) {
                         commit(text, client: sender)
@@ -900,27 +916,34 @@ class CKCInputController: IMKInputController {
                 lookKind = .all
                 refreshCandidates()
                 if shouldAutoSelectMode() {
-                    ckcLog("auto-phrase-no-extension buffer=\(buffer) digit=\(digit) exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0)")
-                    enterAutoSelectMode()
-                    syncCandidateWindow(near: sender)
-                    updateMarked(client: sender)
-                    if digit >= 1 && digit <= 9 {
-                        if lookKind == .phrases {
-                            if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
-                                commit(text, client: sender)
-                                return true
-                            }
-                        } else if lookKind == .characters {
-                            if let text = CandidateWindow.shared.selectCharOnPage(digit) {
-                                commit(text, client: sender)
-                                return true
+                    let extended = buffer + String(digit)
+                    if DictionaryStore.shared.hasCode(withPrefix: extended) {
+                        // e.g. buffer 5883 + digit 4 → 58834 exists; keep composing
+                        ckcLog("auto-select skipped; digit extends '\(extended)' exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0)")
+                        // fall through to append
+                    } else {
+                        ckcLog("auto-phrase-no-extension buffer=\(buffer) digit=\(digit) exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0)")
+                        enterAutoSelectMode()
+                        syncCandidateWindow(near: sender)
+                        updateMarked(client: sender)
+                        if digit >= 1 && digit <= 9 {
+                            if lookKind == .phrases {
+                                if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
+                                    commit(text, client: sender)
+                                    return true
+                                }
+                            } else if lookKind == .characters {
+                                if let text = CandidateWindow.shared.selectCharOnPage(digit) {
+                                    commit(text, client: sender)
+                                    return true
+                                }
                             }
                         }
+                        // digit 0 or out-of-range: stay in select mode (marked * / **)
+                        ensureStatusConsoleVisible(near: sender)
+                        updateUI(client: sender)
+                        return true
                     }
-                    // digit 0 or out-of-range: stay in select mode (marked * / **)
-                    ensureStatusConsoleVisible(near: sender)
-                    updateUI(client: sender)
-                    return true
                 }
                 if lookKind != .all {
                     lookKind = .all

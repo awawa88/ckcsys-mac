@@ -561,6 +561,15 @@ final class DictionaryStore {
         return keys.contains { $0.count > code.count }
     }
 
+    /// True when any user/system key equals `prefix` or starts with it (prefix index hit).
+    /// Used so a digit that continues a longer code (5883+4 → 58834) appends instead of
+    /// being treated as a 選詞/選字 pick after auto-select locked on a shorter exact 詞.
+    func hasCode(withPrefix prefix: String) -> Bool {
+        guard !prefix.isEmpty else { return true }
+        guard let keys = prefixIndex[prefix] else { return false }
+        return !keys.isEmpty
+    }
+
     /// True when `code` itself has at least one multi-character (詞) entry in user or system lexicon.
     /// Used so digits can auto-選詞 (e.g. 06177 → 自己) even if longer keys also exist.
     func hasExactPhrase(for code: String) -> Bool {

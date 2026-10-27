@@ -1,5 +1,33 @@
 # Ckcsys macOS IMK — STATUS
 
+Time: 2026-10-27 12:55 Asia/Hong_Kong (UTC+8)
+Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
+
+## Local 0.2.22 (build 24) — 58834 → 輸入法 (custom/system phrase compose)
+
+Ask: added custom phrase `58834` → `輸入法`; typing 58834 did not show it.
+
+Root cause:
+1. Phrase **was saved** and loaded (`~/Library/Application Support/CKC縱橫/user_phrases.tsv`; activateServer `+ 2 user`).
+2. `58834` is also the correct auto-code for 輸入法 (3字 2+2+2 from 輸/入/法 → `58`+`8`+`34`; 入 primary is only `8`) and already exists in stock `cht_cimb_VISTA.tsv`.
+3. Typing stopped at `5883`: system exact 詞 (中等/責令) + no 字 → `shouldAutoSelectMode` locked 選詞 (` **`) even though longer keys exist (`58834`, …). Digit `4` was treated as candidate pick #4, so buffer never became `58834`.
+
+Fix:
+- `DictionaryStore.hasCode(withPrefix:)` — prefix-index hit test.
+- In phrase/char filter and the before-append auto-select gate: if `buffer+digit` is a known longer (or exact) code prefix, **compose** instead of pick (log `extends … → compose` / `auto-select skipped`).
+- Keeps dead-end auto-選詞 (e.g. 00259+1 → 像素). At an exact 詞 that still has longer keys, digits that extend keep composing; digits that do not still pick. At `58834`, digit `1` does not extend → picks 輸入法. For `06177`, digit `1` extends to `061771` so it appends — use Space (or a non-extending digit) / 選詞 path for 自己.
+
+Evidence: user_phrases.tsv contains `58834\t輸入法`; system cimb has the same mapping.
+
+Install path (ONLY): `~/Library/Input Methods/Ckcsys.app`
+No GitHub push/merge/release.
+
+Retest: numpad `58834` → 選詞 shows 輸入法 (user phrase first); `1` commits 輸入法.
+
+---
+
+# Ckcsys macOS IMK — STATUS
+
 Time: 2026-10-27 12:25 Asia/Hong_Kong (UTC+8)
 Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
 
