@@ -83,7 +83,7 @@ enum CandidateAnchor: String {
 }
 
 /// Compact modern floating status strip (vibrancy HUD).
-/// Shows logo · 繁/簡 · digit-source (小鍵盤/鍵盤) · candidate anchor (光/錨).
+/// Shows 縱 on/off · 繁/簡 · digit-source (小鍵盤/鍵盤) · candidate anchor (光/錨).
 /// Drag empty chrome / labels to reposition; buttons keep normal clicks.
 final class StatusConsole: NSPanel {
     static let shared = StatusConsole()
@@ -100,13 +100,20 @@ final class StatusConsole: NSPanel {
         didSet { refreshLabels(); UserDefaults.standard.set(candidateAnchor.rawValue, forKey: Self.candidateAnchorKey) }
     }
 
+    /// Master compose gate. On (default): CKC compose works. Off: keys pass through as a normal keyboard.
+    private(set) var ckcEnabled: Bool = true {
+        didSet { refreshLabels(); UserDefaults.standard.set(ckcEnabled, forKey: Self.ckcEnabledKey) }
+    }
+
     var onDigitSourceChanged: ((DigitSource) -> Void)?
     var onOutputModeChanged: ((OutputMode) -> Void)?
     var onCandidateAnchorChanged: ((CandidateAnchor) -> Void)?
+    var onCkcEnabledChanged: ((Bool) -> Void)?
 
     private static let digitSourceKey = "ckc.digitSource"
     private static let outputModeKey = "ckc.outputMode"
     private static let candidateAnchorKey = "ckc.candidateAnchor"
+    private static let ckcEnabledKey = "ckc.ckcEnabled"
     private static let originXKey = "ckc.statusConsole.originX"
     private static let originYKey = "ckc.statusConsole.originY"
 
@@ -129,7 +136,7 @@ final class StatusConsole: NSPanel {
     private var gripView: DragGripView!
     private var resizeGripView: ResizeGripView!
     private let cornerRadius: CGFloat = 12
-    /// Default width when nothing persisted: grip + 縱 · 繁/簡 · 小鍵盤/鍵盤 · 光/錨 + BR resize.
+    /// Default width when nothing persisted: grip + 縱 on/off · 繁/簡 · 小鍵盤/鍵盤 · 光/錨 + BR resize.
     private static let defaultStripWidth: CGFloat = 220
     private static let minStripWidth: CGFloat = 180
     private static let maxStripWidth: CGFloat = 420
@@ -140,7 +147,7 @@ final class StatusConsole: NSPanel {
     /// Live size (persisted). Width-first resize; height optional within tight bounds.
     private var stripWidth: CGFloat = StatusConsole.defaultStripWidth
     private var stripHeight: CGFloat = StatusConsole.preferredStripHeight()
-    private var logoLabel: NSTextField!
+    private var ckcEnabledButton: NSButton!
 
     private var dragStartMouse: NSPoint?
     private var dragStartOrigin: NSPoint?
@@ -183,6 +190,11 @@ final class StatusConsole: NSPanel {
         if let raw = UserDefaults.standard.string(forKey: Self.candidateAnchorKey),
            let saved = CandidateAnchor(rawValue: raw) {
             candidateAnchor = saved
+        }
+
+        // bool(forKey:) is false when missing — only override default (true) when key exists.
+        if UserDefaults.standard.object(forKey: Self.ckcEnabledKey) != nil {
+            ckcEnabled = UserDefaults.standard.bool(forKey: Self.ckcEnabledKey)
         }
 
         stripWidth = Self.loadPersistedWidth()
@@ -249,8 +261,11 @@ final class StatusConsole: NSPanel {
         effectView.layer?.backgroundColor = NSColor.clear.cgColor
         effectView.autoresizingMask = [.width, .height]
 
-        logoLabel = NSTextField(labelWithString: "縱")
-        logoLabel.textColor = .controlAccentColor
+        ckcEnabledButton = NSButton(title: "縱", target: self, action: #selector(toggleCkcEnabled(_:)))
+        ckcEnabledButton.bezelStyle = .rounded
+        ckcEnabledButton.setButtonType(.momentaryPushIn)
+        ckcEnabledButton.setContentHuggingPriority(.required, for: .horizontal)
+        ckcEnabledButton.toolTip = "縱橫輸入開／關（關閉後為一般鍵盤）"
 
         outputModeButton = NSButton(title: outputMode.label, target: self, action: #selector(toggleOutputMode(_:)))
         outputModeButton.bezelStyle = .rounded
@@ -280,7 +295,7 @@ final class StatusConsole: NSPanel {
         resizeGripView.translatesAutoresizingMaskIntoConstraints = false
         resizeGripView.toolTip = "拖曳調整狀態列寬度"
 
-        let stack = NSStackView(views: [logoLabel, outputModeButton, sourceButton, anchorButton])
+        let stack = NSStackView(views: [ckcEnabledButton, outputModeButton, sourceButton, anchorButton])
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 4
@@ -332,7 +347,8 @@ final class StatusConsole: NSPanel {
     private func applyChromeFonts() {
         let menu = NSFont.menuBarFont(ofSize: 0)
         let control = Self.chromeControlSize(for: menu)
-        logoLabel?.font = Self.menuBarChromeFont(weight: .bold)
+        ckcEnabledButton?.font = Self.menuBarChromeFont(weight: .bold)
+        ckcEnabledButton?.controlSize = control
         outputModeButton?.font = Self.menuBarChromeFont(weight: .semibold)
         outputModeButton?.controlSize = control
         sourceButton?.font = Self.menuBarChromeFont(weight: .medium)
@@ -380,6 +396,12 @@ final class StatusConsole: NSPanel {
         }
     }
 
+    @objc private func toggleCkcEnabled(_ sender: Any?) {
+        ckcEnabled.toggle()
+        onCkcEnabledChanged?(ckcEnabled)
+        NSLog("[CKC] ckcEnabled → %d", ckcEnabled ? 1 : 0)
+    }
+
     @objc private func toggleSource(_ sender: Any?) {
         digitSource.toggle()
         onDigitSourceChanged?(digitSource)
@@ -415,6 +437,40 @@ final class StatusConsole: NSPanel {
         outputModeButton?.title = outputMode.label
         anchorButton?.title = candidateAnchor.label
         anchorButton?.toolTip = candidateAnchor.toolTip
+        applyCkcEnabledChrome()
+    }
+
+    /// On = bright accent blue; Off = muted grayish blue (still readable).
+    private func applyCkcEnabledChrome() {
+        guard let button = ckcEnabledButton else { return }
+        let color = ckcEnabled ? Self.ckcEnabledOnColor : Self.ckcEnabledOffColor
+        let font = button.font ?? Self.menuBarChromeFont(weight: .bold)
+        button.attributedTitle = NSAttributedString(
+            string: "縱",
+            attributes: [
+                .foregroundColor: color,
+                .font: font,
+            ]
+        )
+        button.toolTip = ckcEnabled
+            ? "縱橫輸入：開（點擊關閉，變為一般鍵盤）"
+            : "縱橫輸入：關（點擊開啟組成）"
+        if #available(macOS 10.14, *) {
+            button.contentTintColor = color
+        }
+    }
+
+    private static var ckcEnabledOnColor: NSColor { .controlAccentColor }
+
+    /// Dark grayish blue — muted blue-gray, not plain gray / dim white.
+    private static var ckcEnabledOffColor: NSColor {
+        NSColor(name: nil) { appearance in
+            let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            if dark {
+                return NSColor(srgbRed: 0.42, green: 0.50, blue: 0.66, alpha: 1)
+            }
+            return NSColor(srgbRed: 0.32, green: 0.40, blue: 0.56, alpha: 1)
+        }
     }
 
     private func applyAppearance() {

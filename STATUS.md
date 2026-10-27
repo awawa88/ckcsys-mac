@@ -1,3 +1,25 @@
+## Local 0.2.29 (build 31) — 縱 StatusConsole on/off (compose gate)
+
+Ask: make 縱 a real button like 繁/小鍵盤/錨. On = CKC compose as today; Off = normal
+keyboard (every key passes through — digits, letters, 選字/選詞, 標點, association).
+
+Changes:
+- StatusConsole: replace static logoLabel with NSButton titled 縱; toggle persists in
+  UserDefaults `ckc.ckcEnabled` (default on).
+- Chrome: On = bright `controlAccentColor` blue; Off = muted grayish blue (not plain gray).
+- `onCkcEnabledChanged` wired in `activateServer`; turning Off clears buffer / candidates /
+  association / punct / marked text. StatusConsole still shows so 縱 can be turned back on.
+- CKCInputController: when disabled, `handle` early-returns false (passthrough). Caps Lock
+  still flips DigitSource + refreshes console labels, but never composes while off.
+
+Install path (ONLY): `~/Library/Input Methods/Ckcsys.app`
+No GitHub push/merge/release.
+
+Verify: select Ckcsys → click 縱 (dims to grayish blue) → type digits as plain 0–9;
+click 縱 again (bright blue) → 06177 composes as before.
+
+---
+
 ## Local 0.2.28 (build 30) — kill StatusConsole rectangular corner haze
 
 Ask: screenshot still showed a light gray / semi-transparent RECTANGULAR haze box

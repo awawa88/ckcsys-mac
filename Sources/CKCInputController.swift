@@ -167,6 +167,15 @@ class CKCInputController: IMKInputController {
             self.ckcLog("candidateAnchor → \(anchor.rawValue) follow-console=\(anchor == .console ? 1 : 0)")
             CandidateWindow.shared.repositionForCurrentAnchor()
         }
+        // 縱 on/off: clear in-progress compose when turning off; StatusConsole stays visible.
+        StatusConsole.shared.onCkcEnabledChanged = { [weak self] enabled in
+            guard let self else { return }
+            self.ckcLog("ckcEnabled → \(enabled ? 1 : 0)")
+            if !enabled {
+                self.clearComposition(client: self.currentClient)
+                CandidateWindow.shared.hide()
+            }
+        }
         // Wire mouse click callback to commit the clicked candidate
         CandidateWindow.shared.onCandidateClicked = { [weak self] text, column in
             guard let self else { return }
@@ -183,9 +192,15 @@ class CKCInputController: IMKInputController {
         if clientId == "com.apple.Notes" || clientId == "com.apple.MobileSMS" {
             ckcLog("ACTIVATE Notes/Messages client=\(clientId) — type digits with Ckcsys; if dead, remove+re-add Input Source")
         }
-        ckcLog("activateServer client=\(clientId) dict=\(DictionaryStore.shared.sourceDescription) digitSource=\(StatusConsole.shared.digitSource.rawValue) outputMode=\(StatusConsole.shared.outputMode.rawValue) capsOn=\(lastCapsLockOn == true ? 1 : 0) buffer='\(buffer)' punct=\(punctMode ? 1 : 0)")
+        ckcLog("activateServer client=\(clientId) dict=\(DictionaryStore.shared.sourceDescription) digitSource=\(StatusConsole.shared.digitSource.rawValue) outputMode=\(StatusConsole.shared.outputMode.rawValue) ckcEnabled=\(StatusConsole.shared.ckcEnabled ? 1 : 0) capsOn=\(lastCapsLockOn == true ? 1 : 0) buffer='\(buffer)' punct=\(punctMode ? 1 : 0)")
         // Notes/Messages churn activate/deactivate; restore marked text + panel if we still have state.
-        if punctMode {
+        // When 縱 is off, stay a normal keyboard — do not revive compose / candidates.
+        if !StatusConsole.shared.ckcEnabled {
+            if !buffer.isEmpty || punctMode || hasAssociation {
+                clearComposition(client: sender)
+                CandidateWindow.shared.hide()
+            }
+        } else if punctMode {
             showPunctCandidates(client: sender)
         } else if !buffer.isEmpty {
             updateUI(client: sender)
@@ -444,6 +459,25 @@ class CKCInputController: IMKInputController {
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
         guard let event = event else { return false }
         currentClient = sender as AnyObject
+
+        // 縱 off → normal keyboard. Caps Lock still flips DigitSource (console labels refresh)
+        // for when compose is re-enabled; never compose / consume other keys while off.
+        if !StatusConsole.shared.ckcEnabled {
+            if event.type == .flagsChanged, event.keyCode == UInt16(kVK_CapsLock) {
+                let capsOn = event.modifierFlags.contains(.capsLock)
+                if lastCapsLockOn == nil || lastCapsLockOn != capsOn {
+                    lastCapsLockOn = capsOn
+                    StatusConsole.shared.toggleDigitSource()
+                    StatusConsole.shared.show(near: sender as AnyObject?)
+                    ckcLog("CapsLock edge (ckcEnabled=0) → digitSource=\(StatusConsole.shared.digitSource.rawValue) capsOn=\(capsOn ? 1 : 0)")
+                }
+                return true
+            }
+            if event.type == .keyDown {
+                ensureStatusConsoleVisible(near: sender)
+            }
+            return false
+        }
 
         // Caps Lock toggles digit source; some keyboards deliver Num Lock only as flagsChanged.
         if event.type == .flagsChanged {
