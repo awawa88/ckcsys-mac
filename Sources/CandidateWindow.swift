@@ -180,6 +180,8 @@ final class CandidateWindow: NSPanel {
         leftStack.alignment = .leading
         leftStack.spacing = 1
         leftStack.distribution = .fill
+        // Keep row slots in place when empty/hidden so ↑↓/←→ never reflows column geometry.
+        leftStack.detachesHiddenViews = false
         for i in 0..<pageSize {
             let row = CandidateRowView()
             row.onClicked = { [weak self] in
@@ -190,6 +192,7 @@ final class CandidateWindow: NSPanel {
             row.translatesAutoresizingMaskIntoConstraints = false
             row.widthAnchor.constraint(equalTo: leftStack.widthAnchor).isActive = true
             row.heightAnchor.constraint(equalToConstant: 28).isActive = true
+            row.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
         leftColumnBox = wrapColumn(leftStack, title: "選字÷", minWidth: charColWidth, titleOut: &leftTitleLabel)
 
@@ -199,6 +202,7 @@ final class CandidateWindow: NSPanel {
         rightStack.alignment = .leading
         rightStack.spacing = 1
         rightStack.distribution = .fill
+        rightStack.detachesHiddenViews = false
         for i in 0..<pageSize {
             let row = CandidateRowView()
             row.onClicked = { [weak self] in
@@ -209,6 +213,7 @@ final class CandidateWindow: NSPanel {
             row.translatesAutoresizingMaskIntoConstraints = false
             row.widthAnchor.constraint(equalTo: rightStack.widthAnchor).isActive = true
             row.heightAnchor.constraint(equalToConstant: 28).isActive = true
+            row.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         }
         rightColumnBox = wrapColumn(rightStack, title: "選詞×", minWidth: phraseColWidth, titleOut: &rightTitleLabel)
 
@@ -223,8 +228,12 @@ final class CandidateWindow: NSPanel {
         columnsStack.alignment = .top
         columnsStack.spacing = 6
         columnsStack.distribution = .fill
-        leftColumnBox.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        // Same: hiding a whole column must not let the other column jump horizontally.
+        columnsStack.detachesHiddenViews = false
+        leftColumnBox.setContentHuggingPriority(.required, for: .horizontal)
+        leftColumnBox.setContentCompressionResistancePriority(.required, for: .horizontal)
         rightColumnBox.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        rightColumnBox.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         hintLabel = NSTextField(labelWithString: "↑↓選  ←→欄  ×後1–9選詞  ÷後1–9選字  −/=翻頁  Space確認")
         hintLabel.font = NSFont.systemFont(ofSize: 9.5, weight: .regular)
@@ -248,6 +257,7 @@ final class CandidateWindow: NSPanel {
             header.widthAnchor.constraint(equalTo: contentStack.widthAnchor, constant: -20),
             columnsStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor, constant: -20),
             hintLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor, constant: -20),
+            // Fixed 選字 width — never compress/shift when selection font weight changes.
             leftColumnBox.widthAnchor.constraint(equalToConstant: charColWidth),
             rightColumnBox.widthAnchor.constraint(greaterThanOrEqualToConstant: phraseColWidth - 40),
         ])
@@ -256,6 +266,9 @@ final class CandidateWindow: NSPanel {
     private func wrapColumn(_ stack: NSStackView, title: String, minWidth: CGFloat, titleOut: inout NSTextField!) -> NSView {
         let box = NSView()
         box.translatesAutoresizingMaskIntoConstraints = false
+        // Clip any row overflow so a layout glitch cannot paint outside the column slot.
+        box.wantsLayer = true
+        box.layer?.masksToBounds = true
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let titleLabel = NSTextField(labelWithString: title)
@@ -270,6 +283,7 @@ final class CandidateWindow: NSPanel {
         col.orientation = .vertical
         col.alignment = .leading
         col.spacing = 2
+        col.detachesHiddenViews = false
         col.translatesAutoresizingMaskIntoConstraints = false
         box.addSubview(col)
         NSLayoutConstraint.activate([
@@ -279,6 +293,8 @@ final class CandidateWindow: NSPanel {
             col.bottomAnchor.constraint(equalTo: box.bottomAnchor),
             box.widthAnchor.constraint(greaterThanOrEqualToConstant: minWidth),
             titleLabel.heightAnchor.constraint(equalToConstant: 14),
+            // Pin stack to full column width so rows don't intrinsic-size the column sideways.
+            stack.widthAnchor.constraint(equalTo: col.widthAnchor),
         ])
         return box
     }
@@ -569,8 +585,6 @@ final class CandidateWindow: NSPanel {
         }
 
         let start = pageIndex * pageSize
-        var visibleLeft = 0
-        var visibleRight = 0
 
         for i in 0..<pageSize {
             let global = start + i
@@ -583,9 +597,10 @@ final class CandidateWindow: NSPanel {
                     selected: selected,
                     labelWidth: 16
                 )
-                visibleLeft += 1
             } else {
+                // Keep the slot (detachesHiddenViews = false); clear chrome so empty rows stay blank.
                 charRowViews[i].isHidden = true
+                charRowViews[i].configure(label: "", text: "", selected: false, labelWidth: 16)
             }
 
             if showRight, global < phraseCandidates.count {
@@ -597,18 +612,20 @@ final class CandidateWindow: NSPanel {
                     selected: selected,
                     labelWidth: 16
                 )
-                visibleRight += 1
             } else {
                 phraseRowViews[i].isHidden = true
+                phraseRowViews[i].configure(label: "", text: "", selected: false, labelWidth: 16)
             }
         }
 
-        let visibleRows = max(visibleLeft, visibleRight, 1)
+        // Always reserve all 9 row slots (even when a page is short). Shrinking/growing
+        // height on ↑↓ reflow was a major reason the 選字 column drifted/clipped.
+        let layoutRows = pageSize
         let headerH: CGFloat = 18
         let colTitleH: CGFloat = 16  // ÷/× or Y/T column titles
         let hintH: CGFloat = 14
         let pad: CGFloat = 20
-        let rowsH = CGFloat(visibleRows) * 28 + CGFloat(max(visibleRows - 1, 0)) * 1
+        let rowsH = CGFloat(layoutRows) * 28 + CGFloat(max(layoutRows - 1, 0)) * 1
         let height = pad + headerH + 6 + colTitleH + rowsH + 4 + hintH
         // Single-column: size to the visible column (字 narrow / 詞 wider).
         let width: CGFloat
@@ -622,12 +639,16 @@ final class CandidateWindow: NSPanel {
         columnsStack.needsLayout = true
         contentStack.needsLayout = true
         effectView.needsLayout = true
-        let newFrame = NSRect(origin: self.frame.origin, size: NSSize(width: width, height: height))
-        setFrame(newFrame, display: true)
-        if let cv = contentView {
-            cv.frame = NSRect(origin: .zero, size: newFrame.size)
+        let newSize = NSSize(width: width, height: height)
+        // Skip setFrame when size unchanged — avoids origin/layout churn on every ↑↓ highlight move.
+        if abs(frame.size.width - newSize.width) > 0.5 || abs(frame.size.height - newSize.height) > 0.5 {
+            let newFrame = NSRect(origin: self.frame.origin, size: newSize)
+            setFrame(newFrame, display: true)
+            if let cv = contentView {
+                cv.frame = NSRect(origin: .zero, size: newFrame.size)
+            }
+            effectView.frame = NSRect(origin: .zero, size: newFrame.size)
         }
-        effectView.frame = NSRect(origin: .zero, size: newFrame.size)
         contentStack.layoutSubtreeIfNeeded()
     }
 

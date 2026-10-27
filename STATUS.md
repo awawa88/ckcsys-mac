@@ -1,3 +1,25 @@
+## Local 0.2.35 (build 37) — 選字 column stays put on ↑↓/←→
+
+### Bug
+Arrow navigation in the two-column candidate HUD shifted/clipped the left 選字
+column (partial strip of numbered chars hugging the left edge, vertically
+staggered vs 選詞). Selection highlight moved, but column frames should not.
+
+### Cause
+1. Every ↑↓/←→/page key called `moveSelection`/`switchColumn` (reloadRows) **and**
+   `updateUI` → deferred `show()` + `position()` — a second async layout/resize.
+2. `NSStackView` default `detachesHiddenViews = true` reflowed column geometry when
+   empty rows were hidden; panel height also shrank/grew with visible row count.
+
+### Fix
+- `CandidateWindow`: `detachesHiddenViews = false` on column stacks; fixed 9-row
+  height; pin 選字 width + compression resistance; skip `setFrame` when size unchanged.
+- `CKCInputController`: navigation keys only update CandidateWindow selection —
+  no `updateUI`/`show`/`position` on pure ↑↓/←→/Tab/page.
+
+### Out of scope
+StatusConsole chrome, glass icon, site — untouched. Not pushed.
+
 ## Local 0.2.34 (build 36) — StatusConsole a little more air again
 
 Ask: 0.2.33 still a bit tight — one small step more room above/below buttons.

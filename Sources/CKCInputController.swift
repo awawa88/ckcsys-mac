@@ -730,28 +730,26 @@ class CKCInputController: IMKInputController {
             return false
         }
 
-        // Navigation when candidates visible
+        // Navigation when candidates visible.
+        // CandidateWindow already reloads rows for these; do NOT call updateUI/show/position
+        // again — a second async layout was shifting/clipping the 選字 column on ↑↓/←→.
         if hasCandidates {
             if keyCode == kVK_UpArrow {
                 selectedIndex = CandidateWindow.shared.moveSelection(-1)
-                updateUI(client: sender)
                 return true
             }
             if keyCode == kVK_DownArrow {
                 selectedIndex = CandidateWindow.shared.moveSelection(1)
-                updateUI(client: sender)
                 return true
             }
             if keyCode == kVK_LeftArrow || keyCode == kVK_RightArrow {
                 _ = CandidateWindow.shared.switchColumn()
                 selectedIndex = CandidateWindow.shared.globalSelectedIndex
-                updateUI(client: sender)
                 return true
             }
             if keyCode == kVK_Tab {
                 _ = CandidateWindow.shared.switchColumn()
                 selectedIndex = CandidateWindow.shared.globalSelectedIndex
-                updateUI(client: sender)
                 return true
             }
 
@@ -760,24 +758,20 @@ class CKCInputController: IMKInputController {
                 || keyCode == Int(kVK_PageUp)
                 || isKeypadMinusEvent(keyCode: keyCode, characters: chars, rawFlags: rawFlags) {
                 selectedIndex = CandidateWindow.shared.prevPage()
-                updateUI(client: sender)
                 return true
             }
             if chars == "=" || chars == "+" || keyCode == Int(kVK_ANSI_Equal) ||
                 isKeypadPlusEvent(keyCode: keyCode, characters: chars, rawFlags: rawFlags)
                 || keyCode == Int(kVK_PageDown) {
                 selectedIndex = CandidateWindow.shared.nextPage()
-                updateUI(client: sender)
                 return true
             }
             if chars == "," || chars == "[" || keyCode == kVK_ANSI_Comma || keyCode == kVK_ANSI_LeftBracket {
                 selectedIndex = CandidateWindow.shared.prevPage()
-                updateUI(client: sender)
                 return true
             }
             if chars == "." || chars == "]" || keyCode == kVK_ANSI_Period || keyCode == kVK_ANSI_RightBracket {
                 selectedIndex = CandidateWindow.shared.nextPage()
-                updateUI(client: sender)
                 return true
             }
         }
