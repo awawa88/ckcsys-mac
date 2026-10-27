@@ -61,6 +61,16 @@ class CKCInputController: IMKInputController {
             }
             self.ckcLog("digitSource changed → \(source.rawValue) headers=\(source.charColumnHeader)/\(source.phraseColumnHeader)")
         }
+        // Wire mouse click callback to commit the clicked candidate
+        CandidateWindow.shared.onCandidateClicked = { [weak self] text, column in
+            guard let self else { return }
+            self.ckcLog("clicked candidate '\(text)' column=\(column == .characters ? "char" : "phrase")")
+            if self.punctMode {
+                self.commitPunct(text, client: self.currentClient)
+            } else {
+                self.commit(text, client: self.currentClient)
+            }
+        }
         CandidateWindow.shared.applyDigitModeLabels(digitSource: StatusConsole.shared.digitSource)
         ckcLog("activateServer dict=\(DictionaryStore.shared.sourceDescription) digitSource=\(StatusConsole.shared.digitSource.rawValue) capsOn=\(lastCapsLockOn == true ? 1 : 0)")
     }
@@ -68,6 +78,7 @@ class CKCInputController: IMKInputController {
     override func deactivateServer(_ sender: Any!) {
         exitPunctMode()
         clearComposition(client: sender)
+        CandidateWindow.shared.onCandidateClicked = nil
         StatusConsole.shared.hide()
         super.deactivateServer(sender)
     }

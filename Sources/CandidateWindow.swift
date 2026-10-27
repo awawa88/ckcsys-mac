@@ -20,6 +20,8 @@ enum CandidateDisplayMode {
 final class CandidateWindow: NSPanel {
     static let shared = CandidateWindow()
 
+    /// Callback when a candidate is clicked: (text: String, column: CandidateColumn)
+    var onCandidateClicked: ((String, CandidateColumn) -> Void)?
 
     private let pageSize = 9
     private var charCandidates: [String] = []
@@ -171,8 +173,11 @@ final class CandidateWindow: NSPanel {
         leftStack.alignment = .leading
         leftStack.spacing = 1
         leftStack.distribution = .fill
-        for _ in 0..<pageSize {
+        for i in 0..<pageSize {
             let row = CandidateRowView()
+            row.onClicked = { [weak self] in
+                self?.handleRowClick(index: i, column: .characters)
+            }
             charRowViews.append(row)
             leftStack.addArrangedSubview(row)
             row.translatesAutoresizingMaskIntoConstraints = false
@@ -187,8 +192,11 @@ final class CandidateWindow: NSPanel {
         rightStack.alignment = .leading
         rightStack.spacing = 1
         rightStack.distribution = .fill
-        for _ in 0..<pageSize {
+        for i in 0..<pageSize {
             let row = CandidateRowView()
+            row.onClicked = { [weak self] in
+                self?.handleRowClick(index: i, column: .phrases)
+            }
             phraseRowViews.append(row)
             rightStack.addArrangedSubview(row)
             row.translatesAutoresizingMaskIntoConstraints = false
@@ -507,6 +515,16 @@ final class CandidateWindow: NSPanel {
         hintLabel?.stringValue = "↑↓選  ←→欄  \(phraseKey)後1–9選詞  \(charKey)後1–9選字  −/=翻頁  Space確認"
     }
 
+    // MARK: - Mouse click handling
+
+    private func handleRowClick(index: Int, column: CandidateColumn) {
+        let global = pageIndex * pageSize + index
+        let candidates = (column == .characters) ? charCandidates : phraseCandidates
+        guard global >= 0, global < candidates.count else { return }
+        let text = candidates[global]
+        onCandidateClicked?(text, column)
+    }
+
     // MARK: - Layout / paint
 
     private func reloadRows() {
@@ -728,6 +746,7 @@ private final class CandidateRowView: NSView {
     private let textLabel = NSTextField(labelWithString: "")
     private var selected = false
     private var labelWidthConstraint: NSLayoutConstraint!
+    var onClicked: (() -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -760,6 +779,14 @@ private final class CandidateRowView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:)") }
+
+    override func mouseDown(with event: NSEvent) {
+        guard !isHidden, !textLabel.stringValue.isEmpty else {
+            super.mouseDown(with: event)
+            return
+        }
+        onClicked?()
+    }
 
     func configure(label: String, text: String, selected: Bool, labelWidth: CGFloat = 16) {
         self.selected = selected
