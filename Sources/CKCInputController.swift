@@ -87,9 +87,10 @@ class CKCInputController: IMKInputController {
     /// Bare init: macOS may allocate without server/delegate/client and skip activateServer.
     override init() {
         super.init()
-        let cid = clientBundleId(client())
+        let bareClient = client() as (IMKTextInput & NSObjectProtocol)?
+        let cid = clientBundleId(bareClient)
         ckcLog("init() bare client=\(cid)")
-        construct(client: client() as? (IMKTextInput & NSObjectProtocol))
+        construct(client: bareClient)
     }
 
     /// Designated IMK init — still run construct so activateServer is not skipped after restart.
