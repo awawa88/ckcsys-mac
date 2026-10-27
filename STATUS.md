@@ -3,6 +3,29 @@
 Time: 2026-10-27 11:30 Asia/Hong_Kong (UTC+8)
 Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
 
+## Local 0.2.13 (build 15) — auto 選詞 when no further code extensions
+
+Andrew: after digits, if there are no more code choices for another digit, the next digit key should switch into phrase-select (選詞) and use that digit as the picker — no need to press T / × / 選詞 first. Not only at length 5: any composition length < 6.
+
+Rule:
+- While composing (buffer non-empty, no `?` wildcard), before appending a digit:
+  - If `DictionaryStore.hasLongerCode(buffer)` (any lexicon key with that prefix and longer length) → append digit as today.
+  - Else → log `auto-phrase-no-extension buffer=… digit=…`, enter phrase mode (marked ` **`), and treat digit 1–9 as phrase pick (commit if valid). Digit 0 / out-of-range still enters phrase mode without committing.
+- At length 6, existing phrase-select-by-digit behavior unchanged.
+- Normal 6-digit codes with extensions still append.
+
+Retest: type `00259` (5-digit, no 6th extension; phrases 像素/偏東/季績) then `1` → expect commit 像素 (or pick 2/3). Type a 5-digit that *has* a 6th extension (e.g. `00000`) then a digit → still appends toward 6. Optional: `0967` (4-digit no longer codes) then `1` → auto phrase pick.
+
+Install path (ONLY): `~/Library/Input Methods/Ckcsys.app`
+No GitHub push/merge/release.
+
+---
+
+# Prior STATUS
+
+Time: 2026-10-27 11:30 Asia/Hong_Kong (UTC+8)
+Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
+
 ## Local 0.2.12 (build 14) — inactive-panel cursor push/pop + hover chrome
 
 Andrew: pointing-hand over candidates never worked. Root cause: LSUIElement + `.nonactivatingPanel` — AppKit ignores `NSCursor.set()` while inactive (SO 18132778). Prior local mouseMoved monitor was ineffective.

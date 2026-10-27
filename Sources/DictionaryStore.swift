@@ -483,6 +483,14 @@ final class DictionaryStore {
         case phrases     // 詞組 — Windows "*"
     }
 
+    /// True when some lexicon key is strictly longer than `code` and shares that prefix
+    /// (i.e. typing another digit can still narrow toward a longer code).
+    func hasLongerCode(for code: String) -> Bool {
+        guard !code.isEmpty else { return true }
+        guard let keys = prefixIndex[code] else { return false }
+        return keys.contains { $0.count > code.count }
+    }
+
     /// Candidates: user phrases first, then exact system, then prefix matches.
     func candidates(for code: String, kind: CandidateKind = .all) -> [String] {
         guard !code.isEmpty else { return [] }

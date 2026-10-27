@@ -5,6 +5,7 @@ import Carbon.HIToolbox
 /// CKC / Ckcsys IMK controller.
 /// Digit entry builds the composition code (max 6). Two-column CandidateWindow: chars | phrases.
 /// T/* = 詞 then 1–9 pick; Y// = 字 then 1–9 pick; −/= page; Space commit.
+/// If buffer has no longer lexicon codes, the next digit auto-enters 選詞 and picks that phrase.
 /// DigitSource: Caps Lock / console toggle sets 標點 key + column headers (÷/× vs Y/T).
 /// Digits from either numpad or number-row compose; arrival auto-switches digitSource.
 @objc(CKCInputController)
@@ -741,7 +742,9 @@ class CKCInputController: IMKInputController {
         }
 
         // Digits: after Y// → pick 字; after T/* → pick 詞;
-        // at 6 digits → 1–9 pick 詞 directly (no T/* needed); else compose from either DigitSource.
+        // at 6 digits → 1–9 pick 詞 directly (no T/* needed);
+        // at any length, if no longer lexicon codes remain → auto 選詞 + digit pick;
+        // else compose from either DigitSource.
         if let digitInfo = classifyDigit(keyCode: keyCode, characters: chars, rawFlags: rawFlags) {
             let digit = digitInfo.value
             let pickModifiers = flags.contains(.option) || flags.contains(.control)
@@ -807,6 +810,36 @@ class CKCInputController: IMKInputController {
                 if atMaxCode {
                     // Already 6 digits: treat 1–9 as phrase pick if possible (any source already handled above)
                     ckcLog("digit \(digit) atMaxCode swallowed source=\(digitInfo.source.rawValue)")
+                    return true
+                }
+                // No further code extensions for this buffer → next digit is 選詞 picker
+                // (same as pressing T/* then the digit). Applies at any length < 6.
+                if !buffer.isEmpty
+                    && !buffer.contains("?")
+                    && !DictionaryStore.shared.hasLongerCode(for: buffer) {
+                    ckcLog("auto-phrase-no-extension buffer=\(buffer) digit=\(digit)")
+                    lookKind = .phrases
+                    selectedIndex = 0
+                    refreshCandidates()
+                    CandidateWindow.shared.show(
+                        composition: buffer,
+                        chars: charCandidates,
+                        phrases: phraseCandidates,
+                        mode: .phrases,
+                        focus: .phrases,
+                        digitSource: StatusConsole.shared.digitSource,
+                        near: (sender as AnyObject?) ?? currentClient
+                    )
+                    updateMarked(client: sender)
+                    if digit >= 1 && digit <= 9 {
+                        if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
+                            commit(text, client: sender)
+                            return true
+                        }
+                    }
+                    // digit 0 or out-of-range: stay in phrase-select mode (marked **)
+                    ensureStatusConsoleVisible(near: sender)
+                    updateUI(client: sender)
                     return true
                 }
                 if lookKind != .all {
