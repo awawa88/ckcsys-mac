@@ -53,6 +53,8 @@ final class CandidateWindow: NSPanel {
     private var lastKnownCaretRect: NSRect?
     /// Initial fallback position captured once per composition session.
     private var initialFallbackPosition: NSPoint?
+    /// Local event monitor to force cursor even when NSButton.cursor fails in nonactivating panels.
+    private var cursorMonitor: Any?
 
     private let panelWidthBoth: CGFloat = 340
     private let panelWidthSingle: CGFloat = 200
@@ -126,10 +128,8 @@ final class CandidateWindow: NSPanel {
         becomesKeyOnlyIfNeeded = true
         isReleasedWhenClosed = false
         animationBehavior = .utilityWindow
-        // Ensure mouse events (clicks and tracking) work for nonactivating panel
+        // Ensure mouse events (clicks and cursor rects) work for nonactivating panel
         ignoresMouseEvents = false
-        // Receive mouseMoved events so we can continuously set cursor (Chrome resets it)
-        acceptsMouseMovedEvents = true
 
         buildUI()
         orderOut(nil)
@@ -366,6 +366,9 @@ final class CandidateWindow: NSPanel {
         level = .popUpMenu
         orderFrontRegardless()
         applyAppearance()
+        
+        // Start monitoring for cursor changes (fallback for nonactivating panel)
+        startCursorMonitoring()
     }
 
     /// Idle 標點 picker — same chrome and caret positioning as composition candidates.
@@ -392,6 +395,7 @@ final class CandidateWindow: NSPanel {
         // Reset cached positions for next composition session
         lastKnownCaretRect = nil
         initialFallbackPosition = nil
+        stopCursorMonitoring()
         orderOut(nil)
     }
 
@@ -535,6 +539,53 @@ final class CandidateWindow: NSPanel {
         guard global >= 0, global < candidates.count else { return }
         let text = candidates[global]
         onCandidateClicked?(text, column)
+    }
+
+    // MARK: - Cursor monitoring (fallback for nonactivating panel)
+    
+    /// Install a local event monitor to force cursor when over clickable candidates.
+    /// NSButton.cursor may not work in nonactivating panels under Chrome, so we
+    /// intercept mouseMoved globally and check if we're over a candidate.
+    private func startCursorMonitoring() {
+        stopCursorMonitoring()
+        
+        cursorMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
+            guard let self = self, self.isVisible else { return event }
+            
+            let mouseLocation = NSEvent.mouseLocation
+            let windowFrame = self.frame
+            
+            // Check if mouse is within our panel bounds
+            guard windowFrame.contains(mouseLocation) else {
+                // Outside panel - let default cursor show
+                return event
+            }
+            
+            // Convert to window coordinates for hit testing
+            let windowPoint = self.convertPoint(fromScreen: mouseLocation)
+            
+            // Use AppKit hit testing to find which view is under the mouse
+            if let hitView = self.contentView?.hitTest(windowPoint) {
+                // Check if hit view is a candidate row or descendant
+                for row in self.charRowViews + self.phraseRowViews {
+                    if (hitView == row || hitView.isDescendant(of: row)) && !row.isEmpty {
+                        NSCursor.pointingHand.set()
+                        return event
+                    }
+                }
+            }
+            
+            // Over panel but not over a candidate - show arrow
+            NSCursor.arrow.set()
+            return event
+        }
+    }
+    
+    private func stopCursorMonitoring() {
+        if let monitor = cursorMonitor {
+            NSEvent.removeMonitor(monitor)
+            cursorMonitor = nil
+        }
     }
 
     // MARK: - Layout / paint
@@ -880,27 +931,48 @@ final class CandidateWindow: NSPanel {
 
 // MARK: - Row
 
-private final class CandidateRowView: NSView {
+/// Clickable candidate row as an actual NSButton for proper cursor + hover in nonactivating panels.
+/// Real NSButton has cursor support that works where NSView/NSControl cursor rects fail.
+private final class CandidateRowView: NSButton {
     private let numberLabel = NSTextField(labelWithString: "")
     private let textLabel = NSTextField(labelWithString: "")
-    private var selected = false
     private var labelWidthConstraint: NSLayoutConstraint!
     var onClicked: (() -> Void)?
-    private var trackingArea: NSTrackingArea?
+    fileprivate(set) var isEmpty: Bool = true
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        
+        // NSButton configuration for transparent clickable area
+        isBordered = false
+        bezelStyle = .inline
+        title = ""
+        setButtonType(.momentaryChange)
         wantsLayer = true
         layer?.cornerRadius = 6
+        
+        // NSButton.cursor property for nonactivating panels - this is the key
+        cursor = .pointingHand
 
+        // Labels as non-interactive subviews for display
         numberLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
         numberLabel.textColor = .secondaryLabelColor
         numberLabel.alignment = .left
         numberLabel.lineBreakMode = .byClipping
+        numberLabel.isEditable = false
+        numberLabel.isSelectable = false
+        numberLabel.isBordered = false
+        numberLabel.drawsBackground = false
+        numberLabel.allowsEditingTextAttributes = false
 
         textLabel.font = NSFont.systemFont(ofSize: 15, weight: .medium)
         textLabel.textColor = .labelColor
         textLabel.lineBreakMode = .byTruncatingTail
+        textLabel.isEditable = false
+        textLabel.isSelectable = false
+        textLabel.isBordered = false
+        textLabel.drawsBackground = false
+        textLabel.allowsEditingTextAttributes = false
 
         numberLabel.translatesAutoresizingMaskIntoConstraints = false
         textLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -916,76 +988,36 @@ private final class CandidateRowView: NSView {
             textLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
             textLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
-
-        setupTrackingArea()
+        
+        // Wire button action
+        target = self
+        action = #selector(handleClick)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:)") }
-
-    private func setupTrackingArea() {
-        if let existing = trackingArea {
-            removeTrackingArea(existing)
-        }
-        trackingArea = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .mouseMoved, .cursorUpdate, .activeInActiveApp, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(trackingArea!)
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        setupTrackingArea()
-    }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        // Return self for hit-testing so tracking and clicks work,
-        // even though we have label subviews
-        return bounds.contains(point) ? self : nil
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        guard !isHidden, !textLabel.stringValue.isEmpty else {
-            super.mouseDown(with: event)
-            return
-        }
+    
+    @objc private func handleClick() {
+        guard !isEmpty else { return }
         onClicked?()
     }
 
-    override func cursorUpdate(with event: NSEvent) {
-        if !isHidden && !textLabel.stringValue.isEmpty {
-            NSCursor.pointingHand.set()
-        } else {
-            NSCursor.arrow.set()
-        }
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        if !isHidden && !textLabel.stringValue.isEmpty {
-            NSCursor.pointingHand.set()
-        }
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        NSCursor.arrow.set()
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        // Continuously set cursor on every move to combat Chrome/Docs resetting it
-        if !isHidden && !textLabel.stringValue.isEmpty {
-            NSCursor.pointingHand.set()
-        } else {
-            NSCursor.arrow.set()
-        }
-    }
-
     func configure(label: String, text: String, selected: Bool, labelWidth: CGFloat = 16) {
-        self.selected = selected
+        let wasEmpty = isEmpty
+        isEmpty = text.isEmpty
+        
         numberLabel.stringValue = label
         textLabel.stringValue = text
         labelWidthConstraint.constant = labelWidth
+        
+        // Update NSButton cursor based on content
+        if isEmpty {
+            cursor = .arrow
+            isEnabled = false
+        } else {
+            cursor = .pointingHand
+            isEnabled = true
+        }
+        
         if selected {
             layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
             numberLabel.textColor = .controlAccentColor
