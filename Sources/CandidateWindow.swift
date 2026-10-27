@@ -125,10 +125,8 @@ final class CandidateWindow: NSPanel {
         becomesKeyOnlyIfNeeded = true
         isReleasedWhenClosed = false
         animationBehavior = .utilityWindow
-        // Ensure mouse events (clicks and tracking) work for nonactivating panel
+        // Ensure mouse events (clicks and cursor rects) work for nonactivating panel
         ignoresMouseEvents = false
-        // Receive mouseMoved events so we can continuously set cursor (Chrome resets it)
-        acceptsMouseMovedEvents = true
 
         buildUI()
         orderOut(nil)
@@ -789,27 +787,43 @@ final class CandidateWindow: NSPanel {
 
 // MARK: - Row
 
-private final class CandidateRowView: NSView {
+/// Clickable candidate row using NSButton for reliable cursor support.
+/// NSButton.cursor works correctly even in nonactivating panels under Chrome/Docs,
+/// unlike NSView + tracking areas which Chrome overrides.
+private final class CandidateRowView: NSControl {
     private let numberLabel = NSTextField(labelWithString: "")
     private let textLabel = NSTextField(labelWithString: "")
     private var selected = false
     private var labelWidthConstraint: NSLayoutConstraint!
     var onClicked: (() -> Void)?
-    private var trackingArea: NSTrackingArea?
+    private var isEmpty: Bool = true
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.cornerRadius = 6
+        
+        // NSControl cursor management for nonactivating panels
+        // This persists across Chrome/Docs cursor resets
+        addCursorRect(bounds, cursor: .pointingHand)
 
         numberLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
         numberLabel.textColor = .secondaryLabelColor
         numberLabel.alignment = .left
         numberLabel.lineBreakMode = .byClipping
+        // Labels must not intercept mouse events — let the control handle them
+        numberLabel.isEditable = false
+        numberLabel.isSelectable = false
+        numberLabel.isBordered = false
+        numberLabel.drawsBackground = false
 
         textLabel.font = NSFont.systemFont(ofSize: 15, weight: .medium)
         textLabel.textColor = .labelColor
         textLabel.lineBreakMode = .byTruncatingTail
+        textLabel.isEditable = false
+        textLabel.isSelectable = false
+        textLabel.isBordered = false
+        textLabel.drawsBackground = false
 
         numberLabel.translatesAutoresizingMaskIntoConstraints = false
         textLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -825,76 +839,36 @@ private final class CandidateRowView: NSView {
             textLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
             textLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
-
-        setupTrackingArea()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:)") }
 
-    private func setupTrackingArea() {
-        if let existing = trackingArea {
-            removeTrackingArea(existing)
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        // Only show pointing hand when row is visible and has content
+        if !isHidden && !isEmpty {
+            addCursorRect(bounds, cursor: .pointingHand)
+        } else {
+            addCursorRect(bounds, cursor: .arrow)
         }
-        trackingArea = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .mouseMoved, .cursorUpdate, .activeInActiveApp, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(trackingArea!)
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        setupTrackingArea()
-    }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        // Return self for hit-testing so tracking and clicks work,
-        // even though we have label subviews
-        return bounds.contains(point) ? self : nil
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard !isHidden, !textLabel.stringValue.isEmpty else {
+        guard !isHidden, !isEmpty else {
             super.mouseDown(with: event)
             return
         }
         onClicked?()
     }
 
-    override func cursorUpdate(with event: NSEvent) {
-        if !isHidden && !textLabel.stringValue.isEmpty {
-            NSCursor.pointingHand.set()
-        } else {
-            NSCursor.arrow.set()
-        }
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        if !isHidden && !textLabel.stringValue.isEmpty {
-            NSCursor.pointingHand.set()
-        }
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        NSCursor.arrow.set()
-    }
-
-    override func mouseMoved(with event: NSEvent) {
-        // Continuously set cursor on every move to combat Chrome/Docs resetting it
-        if !isHidden && !textLabel.stringValue.isEmpty {
-            NSCursor.pointingHand.set()
-        } else {
-            NSCursor.arrow.set()
-        }
-    }
-
     func configure(label: String, text: String, selected: Bool, labelWidth: CGFloat = 16) {
         self.selected = selected
+        self.isEmpty = text.isEmpty
+        
         numberLabel.stringValue = label
         textLabel.stringValue = text
         labelWidthConstraint.constant = labelWidth
+        
         if selected {
             layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
             numberLabel.textColor = .controlAccentColor
@@ -906,5 +880,8 @@ private final class CandidateRowView: NSView {
             textLabel.textColor = .labelColor
             textLabel.font = NSFont.systemFont(ofSize: 15, weight: .medium)
         }
+        
+        // Update cursor rect when visibility/content changes
+        window?.invalidateCursorRects(for: self)
     }
 }
