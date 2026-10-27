@@ -24,11 +24,8 @@ class CKCInputController: IMKInputController {
     private var lastCapsLockOn: Bool?
     /// Debounce Num Lock keyDown+flagsChanged double delivery → one "?".
     private var lastWildcardAppendAt: TimeInterval = 0
-    /// Deferred StatusConsole hide: Messages/Notes/Chrome churn activate↔deactivate
-    /// around the caret; immediate hide on deactivate looks like the strip never appears.
-    private var pendingConsoleHide: DispatchWorkItem?
-    private var consoleHideGeneration: UInt64 = 0
-    private let consoleHideDelay: TimeInterval = 0.30
+    /// Deferred StatusConsole hide lives on StatusConsole (shared) so one controller
+    /// instance cannot fire a hide that another instance's activate already cancelled.
 
     /// Convert Traditional Chinese to Simplified using CFStringTransform (system ICU).
     /// Returns the input unchanged if conversion fails.
@@ -56,25 +53,11 @@ class CKCInputController: IMKInputController {
     }
 
     private func cancelPendingConsoleHide() {
-        pendingConsoleHide?.cancel()
-        pendingConsoleHide = nil
-        consoleHideGeneration &+= 1
+        StatusConsole.shared.cancelPendingHide()
     }
 
     private func scheduleDeferredConsoleHide(clientBundle: String) {
-        cancelPendingConsoleHide()
-        let gen = consoleHideGeneration
-        let delay = consoleHideDelay
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            guard gen == self.consoleHideGeneration else { return }
-            self.ckcLog("StatusConsole deferred-hide fire client=\(clientBundle)")
-            StatusConsole.shared.hide()
-            self.pendingConsoleHide = nil
-        }
-        pendingConsoleHide = work
-        ckcLog("StatusConsole schedule-deferred-hide delay=\(delay) client=\(clientBundle)")
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        StatusConsole.shared.scheduleDeferredHide(clientBundle: clientBundle)
     }
 
     /// Belt-and-suspenders: if activate was skipped/raced, first CKC key brings the strip back.
@@ -84,6 +67,53 @@ class CKCInputController: IMKInputController {
         let clientId = clientBundleId(client)
         StatusConsole.shared.show(near: client as AnyObject?)
         ckcLog("StatusConsole show (ensure-key) client=\(clientId)")
+    }
+
+    // MARK: - Init (vChewing / Shiki Suen pattern)
+    // macOS sometimes constructs IMKInputController via bare init() without activateServer.
+    // Keys stay dead until the user toggles IME. Both inits share construct → activateServer.
+
+    /// Shared post-super.init work: async activateServer with the best available client.
+    private func construct(client theClient: (IMKTextInput & NSObjectProtocol)? = nil) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            let maybeClient: Any? = theClient ?? self.client()
+            let bundle = self.clientBundleId(maybeClient)
+            self.ckcLog("construct → activateServer client=\(bundle)")
+            self.activateServer(maybeClient)
+        }
+    }
+
+    /// Bare init: macOS may allocate without server/delegate/client and skip activateServer.
+    override init() {
+        super.init()
+        let cid = clientBundleId(client())
+        ckcLog("init() bare client=\(cid)")
+        construct(client: client() as? (IMKTextInput & NSObjectProtocol))
+    }
+
+    /// Designated IMK init — still run construct so activateServer is not skipped after restart.
+    override init!(server: IMKServer!, delegate: Any!, client inputClient: Any!) {
+        super.init(server: server, delegate: delegate, client: inputClient)
+        let theClient = inputClient as? (IMKTextInput & NSObjectProtocol)
+        let cid = clientBundleId(theClient)
+        ckcLog("init(server:delegate:client:) client=\(cid)")
+        construct(client: theClient)
+    }
+
+    /// Mode / state tag can arrive on a controller that never got activateServer (bare init).
+    /// Re-activate when we have no client yet or the strip is missing.
+    override func setValue(_ value: Any!, forTag tag: Int, client sender: Any!) {
+        super.setValue(value, forTag: tag, client: sender)
+        let clientId = clientBundleId(sender)
+        ckcLog("setValue tag=\(tag) value=\(String(describing: value)) client=\(clientId)")
+        if currentClient == nil || !StatusConsole.shared.isVisible {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.ckcLog("setValue → re-activateServer client=\(self.clientBundleId(sender))")
+                self.activateServer(sender)
+            }
+        }
     }
 
     override func activateServer(_ sender: Any!) {
@@ -133,6 +163,9 @@ class CKCInputController: IMKInputController {
         }
         CandidateWindow.shared.applyDigitModeLabels(digitSource: StatusConsole.shared.digitSource)
         let clientId = clientBundleId(sender)
+        if clientId == "com.apple.Notes" || clientId == "com.apple.MobileSMS" {
+            ckcLog("ACTIVATE Notes/Messages client=\(clientId) — type digits with Ckcsys; if dead, remove+re-add Input Source")
+        }
         ckcLog("activateServer client=\(clientId) dict=\(DictionaryStore.shared.sourceDescription) digitSource=\(StatusConsole.shared.digitSource.rawValue) outputMode=\(StatusConsole.shared.outputMode.rawValue) capsOn=\(lastCapsLockOn == true ? 1 : 0) buffer='\(buffer)' punct=\(punctMode ? 1 : 0)")
         // Notes/Messages churn activate/deactivate; restore marked text + panel if we still have state.
         if punctMode {

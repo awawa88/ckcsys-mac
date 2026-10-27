@@ -110,6 +110,15 @@ final class StatusConsole: NSPanel {
     private static let originXKey = "ckc.statusConsole.originX"
     private static let originYKey = "ckc.statusConsole.originY"
 
+    // Shared across all IMK controller instances. Per-instance DispatchWorkItem
+    // cannot cancel another controller's pending hide (Notes/Messages/Chrome churn).
+    private static var pendingHideWork: DispatchWorkItem?
+    private static var hideGeneration: UInt64 = 0
+    private static let hideDelay: TimeInterval = 0.30
+
+    private static let widthKey = "ckc.statusConsole.width"
+    private static let heightKey = "ckc.statusConsole.height"
+
     private var effectView: NSVisualEffectView!
     private var chromeView: ChromeView!
     /// Clipped rounded container (cornerRadius + masksToBounds). Border lives here.
@@ -118,13 +127,25 @@ final class StatusConsole: NSPanel {
     private var outputModeButton: NSButton!
     private var anchorButton: NSButton!
     private var gripView: DragGripView!
+    private var resizeGripView: ResizeGripView!
     private let cornerRadius: CGFloat = 12
-    private let stripHeight: CGFloat = 26
-    /// Grip (~14) + 縱 · 繁/簡 · 小鍵盤/鍵盤 · 光/錨
-    private let stripWidth: CGFloat = 190
+    /// Default / fallback height — strip stays toolbar-like.
+    private let defaultStripHeight: CGFloat = 26
+    /// Default width when nothing persisted: grip + 縱 · 繁/簡 · 小鍵盤/鍵盤 · 光/錨 + BR resize.
+    private let defaultStripWidth: CGFloat = 190
+    private let minStripWidth: CGFloat = 160
+    private let maxStripWidth: CGFloat = 400
+    private let minStripHeight: CGFloat = 24
+    private let maxStripHeight: CGFloat = 40
+
+    /// Live size (persisted). Width-first resize; height optional within tight bounds.
+    private var stripWidth: CGFloat = 190
+    private var stripHeight: CGFloat = 26
 
     private var dragStartMouse: NSPoint?
     private var dragStartOrigin: NSPoint?
+    private var resizeStartMouse: NSPoint?
+    private var resizeStartSize: NSSize?
 
     private init() {
         super.init(
@@ -164,8 +185,25 @@ final class StatusConsole: NSPanel {
             candidateAnchor = saved
         }
 
+        stripWidth = Self.loadPersistedWidth()
+        stripHeight = Self.loadPersistedHeight()
+
         buildUI()
         orderOut(nil)
+    }
+
+    private static func loadPersistedWidth() -> CGFloat {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: widthKey) != nil else { return 190 }
+        let w = CGFloat(defaults.double(forKey: widthKey))
+        return min(max(w, 160), 400)
+    }
+
+    private static func loadPersistedHeight() -> CGFloat {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: heightKey) != nil else { return 26 }
+        let h = CGFloat(defaults.double(forKey: heightKey))
+        return min(max(h, 24), 40)
     }
 
     private func buildUI() {
@@ -218,24 +256,34 @@ final class StatusConsole: NSPanel {
         gripView.translatesAutoresizingMaskIntoConstraints = false
         gripView.toolTip = "拖曳移動狀態列"
 
+        resizeGripView = ResizeGripView(frame: .zero)
+        resizeGripView.panel = self
+        resizeGripView.translatesAutoresizingMaskIntoConstraints = false
+        resizeGripView.toolTip = "拖曳調整狀態列寬度"
+
         let stack = NSStackView(views: [logo, outputModeButton, sourceButton, anchorButton])
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 4
-        stack.edgeInsets = NSEdgeInsets(top: 2, left: 2, bottom: 2, right: 6)
+        stack.edgeInsets = NSEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         effectView.addSubview(gripView)
         effectView.addSubview(stack)
+        effectView.addSubview(resizeGripView)
         NSLayoutConstraint.activate([
             gripView.leadingAnchor.constraint(equalTo: effectView.leadingAnchor, constant: 4),
             gripView.centerYAnchor.constraint(equalTo: effectView.centerYAnchor),
             gripView.widthAnchor.constraint(equalToConstant: 14),
             gripView.heightAnchor.constraint(equalToConstant: 18),
             stack.leadingAnchor.constraint(equalTo: gripView.trailingAnchor, constant: 2),
-            stack.trailingAnchor.constraint(equalTo: effectView.trailingAnchor),
+            stack.trailingAnchor.constraint(equalTo: resizeGripView.leadingAnchor, constant: -2),
             stack.topAnchor.constraint(equalTo: effectView.topAnchor),
             stack.bottomAnchor.constraint(equalTo: effectView.bottomAnchor),
+            resizeGripView.trailingAnchor.constraint(equalTo: effectView.trailingAnchor, constant: -2),
+            resizeGripView.bottomAnchor.constraint(equalTo: effectView.bottomAnchor, constant: -2),
+            resizeGripView.widthAnchor.constraint(equalToConstant: 14),
+            resizeGripView.heightAnchor.constraint(equalToConstant: 14),
         ])
 
         container.addSubview(effectView)
@@ -326,15 +374,21 @@ final class StatusConsole: NSPanel {
             }
         }
         gripView?.needsDisplay = true
+        resizeGripView?.needsDisplay = true
     }
 
     // MARK: - Position (default / persist / clamp)
 
+    private func currentSize() -> NSSize {
+        NSSize(width: stripWidth, height: stripHeight)
+    }
+
     private func defaultOrigin() -> NSPoint {
         let screen = NSScreen.main ?? NSScreen.screens.first
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
+        let size = currentSize()
         return NSPoint(
-            x: visible.midX - stripWidth / 2,
+            x: visible.midX - size.width / 2,
             y: visible.minY + 24
         )
     }
@@ -357,9 +411,16 @@ final class StatusConsole: NSPanel {
         defaults.set(Double(origin.y), forKey: Self.originYKey)
     }
 
+    private func persistSize(_ size: NSSize) {
+        let defaults = UserDefaults.standard
+        defaults.set(Double(size.width), forKey: Self.widthKey)
+        defaults.set(Double(size.height), forKey: Self.heightKey)
+    }
+
     /// Keep the strip fully inside some screen's visible frame (prefer the one containing the center).
+    /// Uses the **current** persisted/live size, not a fixed constant.
     private func clampedOrigin(_ origin: NSPoint) -> NSPoint {
-        let size = NSSize(width: stripWidth, height: stripHeight)
+        let size = currentSize()
         var frame = NSRect(origin: origin, size: size)
         let screens = NSScreen.screens
         guard !screens.isEmpty else { return origin }
@@ -386,8 +447,9 @@ final class StatusConsole: NSPanel {
     }
 
     private func placeUsingSavedOrDefault() {
+        let size = currentSize()
         let origin = clampedOrigin(savedOrigin() ?? defaultOrigin())
-        setFrame(NSRect(origin: origin, size: NSSize(width: stripWidth, height: stripHeight)), display: true)
+        setFrame(NSRect(origin: origin, size: size), display: true)
     }
 
     // MARK: - Drag (from ChromeView)
@@ -427,13 +489,106 @@ final class StatusConsole: NSPanel {
         NSLog("[CKC] StatusConsole origin saved (%.0f, %.0f)", origin.x, origin.y)
     }
 
+    // MARK: - Resize (from ResizeGripView, BR corner)
+
+    func beginResize(with event: NSEvent) {
+        resizeStartMouse = NSEvent.mouseLocation
+        resizeStartSize = frame.size
+        NSCursor.resizeLeftRight.push()
+    }
+
+    func continueResize(with event: NSEvent) {
+        guard let startMouse = resizeStartMouse, let startSize = resizeStartSize else { return }
+        let mouse = NSEvent.mouseLocation
+        // Width-first: horizontal delta drives width. Small vertical delta optionally tweaks height.
+        let dx = mouse.x - startMouse.x
+        let dy = mouse.y - startMouse.y  // AppKit: up is positive; dragging BR down decreases y → negative
+        let nextW = min(max(startSize.width + dx, minStripWidth), maxStripWidth)
+        // Prefer keeping height unless user clearly drags vertically.
+        var nextH = startSize.height
+        if abs(dy) > 4 {
+            // Dragging down (mouse.y decreases) → grow height slightly so BR corner follows finger.
+            nextH = min(max(startSize.height - dy, minStripHeight), maxStripHeight)
+        }
+        stripWidth = nextW
+        stripHeight = nextH
+        // Pin top-left (origin.x, origin.y+height) while growing from BR: adjust origin.y when height changes.
+        let heightDelta = nextH - frame.height
+        var origin = frame.origin
+        origin.y -= heightDelta
+        origin = clampedOrigin(origin)
+        setFrame(NSRect(origin: origin, size: NSSize(width: nextW, height: nextH)), display: true)
+    }
+
+    func endResize(with event: NSEvent) {
+        if resizeStartMouse != nil {
+            NSCursor.pop()
+        }
+        resizeStartMouse = nil
+        resizeStartSize = nil
+        let size = currentSize()
+        let origin = clampedOrigin(frame.origin)
+        setFrame(NSRect(origin: origin, size: size), display: true)
+        persistOrigin(origin)
+        persistSize(size)
+        if candidateAnchor == .console {
+            CandidateWindow.shared.repositionForCurrentAnchor()
+        }
+        NSLog("[CKC] StatusConsole size saved (%.0f × %.0f) origin (%.0f, %.0f)",
+              size.width, size.height, origin.x, origin.y)
+    }
+
+    // MARK: - Shared deferred hide
+
+    /// Append one line to /tmp/ckc-ime.log (unified log often redacts NSLog).
+    private static func ckcLog(_ message: String) {
+        let line = message + "\n"
+        let path = "/tmp/ckc-ime.log"
+        if let data = line.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: path),
+               let handle = FileHandle(forWritingAtPath: path) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                handle.closeFile()
+            } else {
+                FileManager.default.createFile(atPath: path, contents: data)
+            }
+        }
+        NSLog("%@", "[CKC] " + message)
+    }
+
+    /// Cancel any pending hide from ANY controller instance.
+    func cancelPendingHide() {
+        Self.pendingHideWork?.cancel()
+        Self.pendingHideWork = nil
+        Self.hideGeneration &+= 1
+    }
+
+    /// Schedule hide; only the matching generation may call hide().
+    func scheduleDeferredHide(clientBundle: String) {
+        cancelPendingHide()
+        let gen = Self.hideGeneration
+        let delay = Self.hideDelay
+        let work = DispatchWorkItem {
+            guard gen == Self.hideGeneration else { return }
+            Self.ckcLog("StatusConsole deferred-hide fire client=\(clientBundle)")
+            StatusConsole.shared.hide()
+            Self.pendingHideWork = nil
+        }
+        Self.pendingHideWork = work
+        Self.ckcLog("StatusConsole schedule-deferred-hide delay=\(delay) client=\(clientBundle)")
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
     func showNearScreenBottom() {
+        cancelPendingHide()
         applyAppearance()
         placeUsingSavedOrDefault()
         orderFrontRegardless()
     }
 
     func show(near client: AnyObject?) {
+        cancelPendingHide()
         applyAppearance()
         // Restore last dragged position (or bottom-center default); ignore caret for the strip.
         placeUsingSavedOrDefault()
@@ -523,6 +678,72 @@ final class StatusConsole: NSPanel {
                     panel.continueDrag(with: next)
                 case .leftMouseUp:
                     panel.endDrag(with: next)
+                    tracking = false
+                default:
+                    break
+                }
+            }
+        }
+    }
+
+    /// Airport-board style BR resize grip: diagonal hatch lines (tertiary label color).
+    /// Dedicated resize-only zone — does not fight left DragGripView or 繁/簡 / 鍵盤 / 光/錨 buttons.
+    private final class ResizeGripView: NSView {
+        weak var panel: StatusConsole?
+
+        override var isOpaque: Bool { false }
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .resizeLeftRight)
+        }
+
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+            true
+        }
+
+        override func draw(_ dirtyRect: NSRect) {
+            super.draw(dirtyRect)
+            let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            let color = (dark
+                ? NSColor.tertiaryLabelColor.withAlphaComponent(0.90)
+                : NSColor.tertiaryLabelColor.withAlphaComponent(0.75))
+            color.setStroke()
+
+            // Three short diagonal lines in the BR corner (NW→SE hatch), like ATC FIDS resize.
+            let inset: CGFloat = 1.5
+            let path = NSBezierPath()
+            path.lineWidth = 1.25
+            path.lineCapStyle = .round
+            let offsets: [CGFloat] = [3.5, 6.5, 9.5]
+            for o in offsets {
+                // Lines parallel to the SE diagonal, anchored near bottom-right.
+                let x0 = bounds.maxX - inset - o
+                let y0 = bounds.minY + inset
+                let x1 = bounds.maxX - inset
+                let y1 = bounds.minY + inset + o
+                guard x0 >= bounds.minX - 0.5 else { continue }
+                path.move(to: NSPoint(x: x0, y: y0))
+                path.line(to: NSPoint(x: x1, y: y1))
+            }
+            path.stroke()
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            guard let panel = panel, let window = window else { return }
+            panel.beginResize(with: event)
+            var tracking = true
+            while tracking {
+                guard let next = window.nextEvent(
+                    matching: [.leftMouseDragged, .leftMouseUp],
+                    until: .distantFuture,
+                    inMode: .eventTracking,
+                    dequeue: true
+                ) else { break }
+                switch next.type {
+                case .leftMouseDragged:
+                    panel.continueResize(with: next)
+                case .leftMouseUp:
+                    panel.endResize(with: next)
                     tracking = false
                 default:
                     break

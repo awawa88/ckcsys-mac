@@ -1,5 +1,60 @@
 # Ckcsys macOS IMK — STATUS
 
+Time: 2026-10-27 11:20 Asia/Hong_Kong (UTC+8)
+Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
+
+## Local 0.2.11 (build 13) — single install; Notes/iMessage init + shared hide; BR resize kept
+
+Andrew: too many Ckcsys installs — wiped all, one local build only.
+
+Wiped before this install:
+- `~/Library/Input Methods/Ckcsys.app` (was 0.2.10)
+- `Projects/ckcsys-mac/build/Ckcsys.app` (rebuild product)
+- No copies in `/Library/Input Methods/`, Downloads, or Desktop
+
+Fixes (local only — not pushed):
+1. **Bare `init()` + `construct(client:)`** (vChewing / Shiki Suen): both inits log client bundle id and async `activateServer(theClient ?? client())`.
+2. **Shared deferred-hide** on `StatusConsole` (static work item + generation). activate / ensure / show cancel shared pending hide; only matching generation may hide. Fixes cross-controller race seen in `/tmp/ckc-ime.log`.
+3. Optional **`setValue(_:forTag:client:)`** re-activates when mode arrives with no client / strip missing.
+4. Clear log: `ACTIVATE Notes/Messages client=com.apple.Notes|com.apple.MobileSMS`.
+
+Kept from 0.2.8–0.2.10:
+- Digit-from-either-source + buffer-across-deactivate
+- 光/錨, left drag grip
+- BR resize grip (width-first, persisted)
+
+Install path (ONLY): `~/Library/Input Methods/Ckcsys.app`
+
+After install: click Notes and iMessage message field with Ckcsys selected; type digits. If still dead, remove Ckcsys from System Settings → Keyboard → Input Sources and add it again (known Squirrel/macOS dead-session fix).
+
+---
+
+# Prior STATUS
+
+
+Time: 2026-10-27 11:09 Asia/Hong_Kong (UTC+8)
+Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
+
+## Local 0.2.10 (build 12) — StatusConsole BR resize grip
+
+Ask: resize StatusConsole from lower-right corner (ATC FIDS-style diagonal hatch).
+
+Change (local only — not pushed):
+- `ResizeGripView` (~14pt) bottom-right of StatusConsole; tertiary diagonal lines; cursor `NSCursor.resizeLeftRight`.
+- Drag resizes **width-first** (min 160 / max 400). Optional height within 24–40 if vertical drag >4pt.
+- Persists `ckc.statusConsole.width` / `.height` in UserDefaults.
+- `placeUsingSavedOrDefault` / `clampedOrigin` use live persisted size (not fixed constant only).
+- Dedicated BR zone — left DragGripView + 繁/簡 / 鍵盤 / 光/錨 unchanged.
+- On resize end, if `candidateAnchor == .console`, calls `CandidateWindow.repositionForCurrentAnchor()`.
+- Keeps all 0.2.9 behavior (deferred hide, 光/錨, left 3×6 drag grip).
+
+Install: `~/Library/Input Methods/Ckcsys.app` relaunched after `scripts/build.sh` + `scripts/install.sh`.
+
+Note: Notes/Messages IMK console visibility is **out of scope** for this bump; parent researching separately.
+
+---
+
+# Prior STATUS
 Time: 2026-10-27 11:00 Asia/Hong_Kong (UTC+8)
 Machine: Andrews-Mac-mini (machineId 78fe0a68-08f2-44f8-a752-9508b4a15be8)
 
