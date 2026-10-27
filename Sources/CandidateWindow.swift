@@ -123,6 +123,8 @@ final class CandidateWindow: NSPanel {
         animationBehavior = .utilityWindow
         // Ensure mouse events (clicks and tracking) work for nonactivating panel
         ignoresMouseEvents = false
+        // Receive mouseMoved events so we can continuously set cursor (Chrome resets it)
+        acceptsMouseMovedEvents = true
 
         buildUI()
         orderOut(nil)
@@ -819,7 +821,7 @@ private final class CandidateRowView: NSView {
         }
         trackingArea = NSTrackingArea(
             rect: bounds,
-            options: [.mouseEnteredAndExited, .cursorUpdate, .activeInActiveApp, .inVisibleRect],
+            options: [.mouseEnteredAndExited, .mouseMoved, .cursorUpdate, .activeInActiveApp, .inVisibleRect],
             owner: self,
             userInfo: nil
         )
@@ -861,6 +863,15 @@ private final class CandidateRowView: NSView {
 
     override func mouseExited(with event: NSEvent) {
         NSCursor.arrow.set()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        // Continuously set cursor on every move to combat Chrome/Docs resetting it
+        if !isHidden && !textLabel.stringValue.isEmpty {
+            NSCursor.pointingHand.set()
+        } else {
+            NSCursor.arrow.set()
+        }
     }
 
     func configure(label: String, text: String, selected: Bool, labelWidth: CGFloat = 16) {
