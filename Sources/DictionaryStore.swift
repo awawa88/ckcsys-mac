@@ -573,12 +573,23 @@ final class DictionaryStore {
     }
 
     /// True when any user/system key equals `prefix` or starts with it (prefix index hit).
-    /// Used so a digit that continues a longer code (5883+4 → 58834) appends instead of
-    /// being treated as a 選詞/選字 pick after auto-select locked on a shorter exact 詞.
+    /// Used while *composing* (lookKind == .all) so a digit that continues a longer code
+    /// (5883+4 → 58834) appends. Never consulted once 選詞/選字 is armed — pick wins.
     func hasCode(withPrefix prefix: String) -> Bool {
         guard !prefix.isEmpty else { return true }
         guard let keys = prefixIndex[prefix] else { return false }
         return !keys.isEmpty
+    }
+
+    /// True when a **user-added** key equals `prefix` or starts with it.
+    /// Compose-over-pick while still in .all (before 選詞) may use this so stock longer
+    /// keys like 061771 under 06177 do not block one-shot auto pick of 自己.
+    func hasUserCode(withPrefix prefix: String) -> Bool {
+        guard !prefix.isEmpty else { return true }
+        for key in userExact.keys where key == prefix || key.hasPrefix(prefix) {
+            return true
+        }
+        return false
     }
 
     /// True when `code` itself has at least one multi-character (詞) entry in user or system lexicon.

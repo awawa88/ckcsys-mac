@@ -1,3 +1,29 @@
+## Local 0.2.26 (build 28) — phrase mode digits ONLY pick (06177→自己)
+
+Ask (t255u/t256u/t259u): `06177` still broken after 0.2.25. Retest: after `06177`, digit `1`
+inserted a literal ASCII `1` (inactive DigitSource passthrough) and/or, with active row /
+explicit 選詞 (T/×), digit `1` composed to `061771` instead of picking 自己.
+
+Root cause (runtime `/tmp/ckc-ime.log` on tip 0.2.25/27 = same SHA as install — not stale):
+1. Auto-選詞 *did* arm at `06177` (`auto-select-enter … mode=phrases userLonger=0`).
+2. Phrase-mode still had compose-over-pick: `hasCode(withPrefix: "061771")` (stock 白雲區)
+   → `phrase-mode digit=1 extends '061771' → compose`. Same steal after manual 選詞.
+3. Inactive DigitSource digits always `return false` → app inserts literal `1` while ` **` armed.
+
+Fix:
+- Once `lookKind == .phrases` or `.characters` (manual T/×/Y/// **or** auto), digits 1–9
+  **only** pick — no `hasCode` extend / compose-over-pick.
+- Inactive-row 1–9 allowed solely for armed pick (still never compose / never flip DigitSource).
+- Before-append auto one-shot: skip only when a **user** code extends (`hasUserCode`); stock
+  longer keys no longer block pick of 自己.
+- `5883`+user`58834`: still no auto (`hasLongerUserCode`); typing `4` in `.all` still composes
+  輸入法; after explicit 選詞, digits pick the shortlist (not extend).
+
+Retest:
+1. Numpad (or active row) `06177` → marked ` **` → `1` → 自己 (log `phrase-mode pick` / `auto-phrase-pick commit`).
+2. `06177` → 選詞 (T/×) → `1` → 自己.
+3. `5883` no auto; `58834` → 輸入法 first; after 選詞 at `5883`, digits pick not extend.
+
 # Ckcsys macOS IMK — STATUS
 
 Time: 2026-10-27 13:20 Asia/Hong_Kong (UTC+8)

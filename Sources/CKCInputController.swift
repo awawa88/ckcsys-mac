@@ -808,14 +808,20 @@ class CKCInputController: IMKInputController {
             let pickModifiers = flags.contains(.option) || flags.contains(.control)
             let atMaxCode = buffer.count >= 6
 
-            // Mode gate: only the active physical row feeds compose / candidate pick.
+            // Mode gate: only the active physical row feeds *compose*.
             // Never auto-switch DigitSource (sticky since 0.2.14/0.2.15).
-            // Inactive-source digits always pass through (return false / unhandled) so they
-            // insert as regular 0–9 — including while composing or in 標點. Never append to
-            // the CKC buffer and never flip DigitSource.
-            if digitInfo.source != StatusConsole.shared.digitSource {
-                ckcLog("digit \(digit) IGNORE inactive (passthrough) src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue) composing=\(composing ? 1 : 0) punct=\(punctMode ? 1 : 0)")
-                return false
+            // Exception: once 選詞/選字 is armed (lookKind phrases/characters), inactive-row
+            // 1–9 still pick the current candidate list — never ASCII-insert a literal digit
+            // over an armed shortlist (06177 ** + top-row 1 must commit 自己).
+            let inactiveDigitSource = digitInfo.source != StatusConsole.shared.digitSource
+            if inactiveDigitSource {
+                let armedPick = (lookKind == .phrases || lookKind == .characters)
+                    && digit >= 1 && digit <= 9 && hasCandidates && flags.isEmpty
+                if !armedPick {
+                    ckcLog("digit \(digit) IGNORE inactive (passthrough) src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue) composing=\(composing ? 1 : 0) punct=\(punctMode ? 1 : 0) look=\(String(describing: lookKind))")
+                    return false
+                }
+                ckcLog("digit \(digit) inactive-source pick allowed look=\(String(describing: lookKind)) src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue)")
             }
 
             // Association after 字 commit: digits pick ONLY when 選詞 armed; else start a fresh code.
@@ -845,39 +851,35 @@ class CKCInputController: IMKInputController {
                     }
                     return true
                 }
-                // If this digit continues a longer lexicon/user code (e.g. 5883+4 → 58834
-                // 輸入法), leave 選詞/選字 and compose — do not treat it as candidate pick.
-                let extended = buffer + String(digit)
-                let digitExtendsCode = !buffer.isEmpty
-                    && DictionaryStore.shared.hasCode(withPrefix: extended)
-                // Phrase filter (T / * / auto-選詞): 1–9 commits phrase — never only toggle **
+                // Armed 選詞 (T/× or auto): 1–9 ONLY pick — never compose-over-pick.
+                // Stock longer keys under 06177 (061770/061771/061777) must not steal digit 1
+                // away from 自己 once phrase mode is on (manual OR auto). To reach a longer
+                // code, stay in .all (do not press 選詞 / wait for auto) and keep typing.
                 if lookKind == .phrases {
-                    if digitExtendsCode {
-                        ckcLog("phrase-mode digit=\(digit) extends '\(extended)' → compose")
-                        lookKind = .all
-                        // fall through to compose below
-                    } else {
-                        syncCandidateWindow(near: sender)
-                        if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
-                            commit(text, client: sender)
-                            return true
-                        }
+                    syncCandidateWindow(near: sender)
+                    if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
+                        ckcLog("phrase-mode pick digit=\(digit) → '\(text)' buffer='\(buffer)'")
+                        commit(text, client: sender)
                         return true
                     }
-                } else if lookKind == .characters {
-                    // Char filter (Y / / / auto-選字): 1–9 commits character
-                    if digitExtendsCode {
-                        ckcLog("char-mode digit=\(digit) extends '\(extended)' → compose")
-                        lookKind = .all
-                        // fall through to compose below
-                    } else {
-                        syncCandidateWindow(near: sender)
-                        if let text = CandidateWindow.shared.selectCharOnPage(digit) {
-                            commit(text, client: sender)
-                            return true
-                        }
+                    ckcLog("phrase-mode pick digit=\(digit) miss buffer='\(buffer)' phrases=\(phraseCandidates.count)")
+                    return true
+                }
+                // Armed 選字 (Y/// or auto): 1–9 ONLY pick characters.
+                if lookKind == .characters {
+                    syncCandidateWindow(near: sender)
+                    if let text = CandidateWindow.shared.selectCharOnPage(digit) {
+                        ckcLog("char-mode pick digit=\(digit) → '\(text)' buffer='\(buffer)'")
+                        commit(text, client: sender)
                         return true
                     }
+                    ckcLog("char-mode pick digit=\(digit) miss buffer='\(buffer)' chars=\(charCandidates.count)")
+                    return true
+                }
+                // Inactive source never composes — pick paths above already returned.
+                if inactiveDigitSource {
+                    ckcLog("digit \(digit) IGNORE inactive (no armed pick) src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue)")
+                    return false
                 }
                 // At 6 digits with only chars (no phrases): allow char pick
                 if lookKind == .all && atMaxCode && !charCandidates.isEmpty && phraseCandidates.isEmpty {
@@ -920,23 +922,26 @@ class CKCInputController: IMKInputController {
                 refreshCandidates()
                 if shouldAutoSelectMode() {
                     let extended = buffer + String(digit)
-                    if DictionaryStore.shared.hasCode(withPrefix: extended) {
-                        // e.g. buffer 5883 + digit 4 → 58834 exists; keep composing
-                        ckcLog("auto-select skipped; digit extends '\(extended)' exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0) userLonger=\(DictionaryStore.shared.hasLongerUserCode(for: buffer) ? 1 : 0)")
+                    // Only a *user* longer code under this digit keeps composing (5883+4→輸入法).
+                    // Stock longer keys (06177+1→061771) must NOT skip: enter 選詞 and pick.
+                    if DictionaryStore.shared.hasUserCode(withPrefix: extended) {
+                        ckcLog("auto-select skipped; user digit extends '\(extended)' exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0) userLonger=\(DictionaryStore.shared.hasLongerUserCode(for: buffer) ? 1 : 0)")
                         // fall through to append
                     } else {
-                        ckcLog("auto-phrase-no-extension buffer=\(buffer) digit=\(digit) exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0) userLonger=\(DictionaryStore.shared.hasLongerUserCode(for: buffer) ? 1 : 0)")
+                        ckcLog("auto-phrase-pick buffer=\(buffer) digit=\(digit) exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0) userLonger=\(DictionaryStore.shared.hasLongerUserCode(for: buffer) ? 1 : 0) stockExtends=\(DictionaryStore.shared.hasCode(withPrefix: extended) ? 1 : 0)")
                         enterAutoSelectMode()
                         syncCandidateWindow(near: sender)
                         updateMarked(client: sender)
                         if digit >= 1 && digit <= 9 {
                             if lookKind == .phrases {
                                 if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
+                                    ckcLog("auto-phrase-pick commit digit=\(digit) → '\(text)'")
                                     commit(text, client: sender)
                                     return true
                                 }
                             } else if lookKind == .characters {
                                 if let text = CandidateWindow.shared.selectCharOnPage(digit) {
+                                    ckcLog("auto-char-pick commit digit=\(digit) → '\(text)'")
                                     commit(text, client: sender)
                                     return true
                                 }
@@ -1000,7 +1005,7 @@ class CKCInputController: IMKInputController {
     /// Whether the current buffer should lock into 選詞/選字 without T/Y.
     /// - Dead-end (!hasLongerCode): any candidates → auto.
     /// - Exact 詞 with zero 字 left (e.g. 06177 → 自己) even if stock longer keys
-    ///   like 061771 exist — digits then pick / compose-over-pick via hasCode(withPrefix:).
+    ///   like 061771 exist — once armed, digits 1–9 ONLY pick (no compose-over-pick).
     /// - User-added longer phrase under the buffer (hasLongerUserCode) overrides:
     ///   at 5883 with user 58834→輸入法, no auto shortlist; need T/× for 中等/責令.
     private func shouldAutoSelectMode() -> Bool {
