@@ -48,6 +48,10 @@ final class CandidateWindow: NSPanel {
     private var phraseRowViews: [CandidateRowView] = []
     /// Active digit mode — drives ÷/× vs Y/T column headers and footer hint.
     private var digitSource: DigitSource = .numpad
+    /// Last known good caret position for stable fallback (never tracks mouse).
+    private var lastKnownCaretRect: NSRect?
+    /// Initial fallback position captured once per composition session.
+    private var initialFallbackPosition: NSPoint?
 
     private let panelWidthBoth: CGFloat = 340
     private let panelWidthSingle: CGFloat = 200
@@ -384,6 +388,9 @@ final class CandidateWindow: NSPanel {
         pageIndex = 0
         focusedColumn = .characters
         displayMode = .both
+        // Reset cached positions for next composition session
+        lastKnownCaretRect = nil
+        initialFallbackPosition = nil
         orderOut(nil)
     }
 
@@ -623,40 +630,49 @@ final class CandidateWindow: NSPanel {
     private func position(near client: AnyObject?) {
         // Always anchor to the IMK text client / caret — never StatusConsole as primary.
         let anchor = caretAnchor(near: client)
-        let mouse = NSEvent.mouseLocation
-
-        let screen = screenFor(anchor?.origin ?? mouse)
-        let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
-        let size = frame.size
-
-        var origin: NSPoint
+        
+        let screen: NSScreen?
+        let visible: NSRect
+        
         if let a = anchor {
-            // Sanity check: if caret rect is far from mouse while composing, it may be wrong.
-            // Chrome/Docs often returns content-area origin instead of real caret.
-            let distanceFromMouse = hypot(a.midX - mouse.x, a.midY - mouse.y)
-            if !composition.isEmpty && distanceFromMouse > 200 {
-                NSLog("[CKC] caret rect far from mouse (%.0fpt) during compose '%@' — using mouse fallback. caret=%@ mouse=%@",
-                      distanceFromMouse, composition as NSString,
-                      NSStringFromRect(a), NSStringFromPoint(mouse))
-                // Use mouse fallback instead of bogus caret rect
-                origin = NSPoint(x: mouse.x + 12, y: mouse.y - size.height - 12)
-            } else {
-                // Prefer below caret; flip above if not enough room.
-                origin = NSPoint(x: a.origin.x, y: a.origin.y - size.height - 6)
-                if origin.y < visible.minY + 8 {
-                    origin.y = a.maxY + 6
-                }
+            // Found a valid caret rect — cache it and use it
+            lastKnownCaretRect = a
+            screen = screenFor(a.origin)
+            visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
+        } else if let lastGood = lastKnownCaretRect {
+            // No current anchor, but we have a cached position from earlier in this session
+            screen = screenFor(lastGood.origin)
+            visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
+        } else {
+            // No anchor ever found — use fallback screen position
+            let mouse = NSEvent.mouseLocation
+            screen = screenFor(mouse)
+            visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 800)
+        }
+        
+        let size = frame.size
+        var origin: NSPoint
+        
+        if let a = anchor ?? lastKnownCaretRect {
+            // Use caret position (current or cached)
+            // Prefer below caret; flip above if not enough room.
+            origin = NSPoint(x: a.origin.x, y: a.origin.y - size.height - 6)
+            if origin.y < visible.minY + 8 {
+                origin.y = a.maxY + 6
             }
         } else {
-            // Fallback: near mouse (typing area), else lower-center of the client screen.
-            // Do NOT park beside StatusConsole.
-            if visible.contains(mouse) {
-                origin = NSPoint(x: mouse.x + 12, y: mouse.y - size.height - 12)
+            // First-time fallback: capture initial position once per session.
+            // Use lower-center of screen (stable, never tracks mouse movement).
+            if let cached = initialFallbackPosition {
+                origin = cached
             } else {
                 origin = NSPoint(
                     x: visible.midX - size.width / 2,
                     y: visible.minY + max(120, visible.height * 0.35)
                 )
+                initialFallbackPosition = origin
+                NSLog("[CKC] no caret rect available — using stable fallback position at screen lower-center: %@",
+                      NSStringFromPoint(origin))
             }
         }
 
