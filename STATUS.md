@@ -1,3 +1,18 @@
+## Local 0.2.37 (build 39) — wildcard `8?9` 選字 includes 889
+
+Ask: `8?9` must show 選字 for codes matching `8[0-9]9` including 889 (策/築/繁…).
+
+Root cause: `candidatesWildcard` treated `?` as a prefix mask (`key.count >= pattern.count`) and
+capped at 120 *keys*. Phrase table has hundreds of `809xxx` keys, so the scan stopped before
+`889` (index ~547 of ~768). 選字 only saw early hits like 叙(8094)/榘(819).
+
+Fix:
+- Exact-length matches first (`8?9` → 819/849/879/889/899).
+- Then longer codes that share the pattern as a prefix (length-asc).
+- Cap on candidate *words*, not raw keys.
+
+Verify: compose `8?9` → 選字 lists 榘/斜/槊/策/築/繁… (889 present). Same on iOS.
+
 ## Local 0.2.36 (build 38) — primary char codes prefer lower xh (意→333)
 
 Ask: custom-add phrase auto-detect for 意 was **337**, should be **333**.

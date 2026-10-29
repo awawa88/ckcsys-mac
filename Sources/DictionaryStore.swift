@@ -733,26 +733,36 @@ final class DictionaryStore {
     }
 
     /// Wildcard "?" matches any single digit in code (Windows 萬能鍵 / Num Lock).
+    /// Exact-length keys first (`8?9` → 819/849/879/889/899 incl. 策…), then longer
+    /// codes that share the pattern as a prefix. Cap is on *candidates*, not raw keys —
+    /// otherwise phrase keys like 809xxx starve 選字 (889 was index ~547 of 768).
     func candidatesWildcard(for pattern: String, kind: CandidateKind = .all) -> [String] {
         if !pattern.contains("?") {
             return candidates(for: pattern, kind: kind)
         }
-        let keys = Set(exact.keys).union(userExact.keys)
-        var matched: [String] = []
         let pats = Array(pattern)
-        for key in keys.sorted() {
+        let plen = pats.count
+        guard plen > 0 else { return [] }
+
+        func matches(_ key: String) -> Bool {
             let ks = Array(key)
-            if ks.count < pats.count { continue }
-            var ok = true
-            for i in 0..<pats.count {
-                if pats[i] != "?" && pats[i] != ks[i] { ok = false; break }
+            guard ks.count >= plen else { return false }
+            for i in 0..<plen {
+                if pats[i] != "?" && pats[i] != ks[i] { return false }
             }
-            if ok { matched.append(key) }
-            if matched.count >= prefixResultCap { break }
+            return true
         }
+
+        let allKeys = Set(exact.keys).union(userExact.keys)
+        let exactLen = allKeys.filter { $0.count == plen && matches($0) }.sorted()
+        let longer = allKeys.filter { $0.count > plen && matches($0) }.sorted {
+            if $0.count != $1.count { return $0.count < $1.count }
+            return $0 < $1
+        }
+
         var out: [String] = []
         var seen = Set<String>()
-        for k in matched {
+        for k in exactLen + longer {
             let merged = (userExact[k] ?? []) + (exact[k] ?? [])
             let list: [String]
             switch kind {
