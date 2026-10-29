@@ -12,8 +12,18 @@ final class DictionaryStore {
     private var prefixIndex: [String: [String]] = [:]
     /// Cap prefix-expansion candidates so UI stays snappy on short codes.
     private let prefixResultCap = 120
-    /// Cap phrases shown after committing a single 字 (聯想 / association).
+    /// Wildcard exact-length 選字 can exceed `prefixResultCap` (e.g. `4?99` → ~71;
+    /// single-`?` worst cases ~560). Dedicated ceiling so ALL exact-length character
+    /// matches stay reachable via CandidateWindow paging (pageSize 9); longer-prefix
+    /// pass still fills only remaining slots under this same ceiling. Mirrors iOS
+    /// `wildcardResultCap` (0.1.8).
+    private let wildcardResultCap = 600
+    /// Cap phrases shown for 聯想 / association (after one or more committed chars).
     private let associationCap = 90
+    /// Per-first-char pool size in the association index. Larger than `associationCap` so
+    /// multi-char seeds (e.g. 香港) can still find shorter high-value continuations like 香港人
+    /// after long high-pd names fill the display cap.
+    private let associationIndexCap = 400
     /// firstChar → phrases starting with that char (pd-desc, capped). Built at load.
     private var phrasesByFirstChar: [String: [String]] = [:]
     /// Accumulator during table load: firstChar → [(pd, phrase)].
@@ -197,22 +207,79 @@ final class DictionaryStore {
             for (_, w) in pairs.sorted(by: { $0.0 > $1.0 }) {
                 if seen.insert(w).inserted {
                     out.append(w)
-                    if out.count >= associationCap { break }
+                    if out.count >= associationIndexCap { break }
                 }
             }
             if !out.isEmpty { phrasesByFirstChar[key] = out }
         }
         associationAcc.removeAll(keepingCapacity: true)
-        NSLog("[CKC] Association index first-chars=%d cap=%d", phrasesByFirstChar.count, associationCap)
+        NSLog("[CKC] Association index first-chars=%d indexCap=%d showCap=%d", phrasesByFirstChar.count, associationIndexCap, associationCap)
     }
 
-    /// Lexicon phrases that start with the given character (any committed 字, not a hardcode).
-    func phrasesStarting(with character: String, limit: Int? = nil) -> [String] {
-        guard let ch = character.first else { return [] }
+    /// Lexicon phrases that start with `prefix` (1+ chars). Continuations only (`word.count > prefix.count`).
+    /// Multi-char uses the first-char index then filters — same Windows lexicon, no invented linguistics.
+    func phrasesStarting(with prefix: String, limit: Int? = nil) -> [String] {
+        guard !prefix.isEmpty, let ch = prefix.first else { return [] }
         let all = phrasesByFirstChar[String(ch)] ?? []
         let lim = limit ?? associationCap
-        if lim >= all.count { return all }
-        return Array(all.prefix(lim))
+        var filtered: [String]
+        if prefix.count == 1 {
+            filtered = all.filter { $0.count > 1 }
+        } else {
+            filtered = all.filter { $0.hasPrefix(prefix) && $0.count > prefix.count }
+        }
+        // Shorter continuations first (build toward a phrase); stable within same length (pd order).
+        filtered = filtered.enumerated().sorted { a, b in
+            if a.element.count != b.element.count { return a.element.count < b.element.count }
+            return a.offset < b.offset
+        }.map(\.element)
+        if lim >= filtered.count { return filtered }
+        return Array(filtered.prefix(lim))
+    }
+
+    /// Prefer shortest viable suffix of `context` (esp. last 字) for 選詞, then append
+    /// longer multi-char context continuations at lower priority (reserved slots). No invented
+    /// linguistics — only lexicon hits. `seed` is the primary (shortest) hit.
+    func bestAssociation(for context: String, maxLen: Int = 6, limit: Int? = nil) -> (seed: String, phrases: [String])? {
+        let chars = Array(context)
+        guard !chars.isEmpty else { return nil }
+        let upper = min(chars.count, max(1, maxLen))
+
+        let lim = limit ?? associationCap
+        var primarySeed: String?
+        var shortPhrases: [String] = []
+        var longerPhrases: [String] = []
+        var longerSeen = Set<String>()
+        // Shortest → longest so 港… leads before 香港… when context is 香港.
+        for len in 1...upper {
+            let seed = String(chars[(chars.count - len)...])
+            let phrases = phrasesStarting(with: seed, limit: lim)
+            guard !phrases.isEmpty else { continue }
+            if primarySeed == nil {
+                primarySeed = seed
+                shortPhrases = phrases
+            } else {
+                for p in phrases where !shortPhrases.contains(p) && longerSeen.insert(p).inserted {
+                    longerPhrases.append(p)
+                }
+            }
+        }
+        guard let seed = primarySeed, !shortPhrases.isEmpty else { return nil }
+        // Reserve a few slots so longer multi-char context continuations still appear (lower priority).
+        var merged: [String]
+        if longerPhrases.isEmpty {
+            merged = shortPhrases
+        } else {
+            let reserve = min(20, max(1, lim / 3), longerPhrases.count)
+            let shortKeep = max(0, lim - reserve)
+            merged = Array(shortPhrases.prefix(shortKeep))
+            for p in longerPhrases {
+                if merged.count >= lim { break }
+                merged.append(p)
+            }
+        }
+        if merged.count > lim { merged = Array(merged.prefix(lim)) }
+        return (seed, merged)
     }
 
     /// Prefer known Windows exports: zimb (singles) before cimb (phrases).
@@ -447,7 +514,7 @@ final class DictionaryStore {
             var list = phrasesByFirstChar[key] ?? []
             if let idx = list.firstIndex(of: phrase) { list.remove(at: idx) }
             list.insert(phrase, at: 0)
-            if list.count > associationCap { list = Array(list.prefix(associationCap)) }
+            if list.count > associationIndexCap { list = Array(list.prefix(associationIndexCap)) }
             phrasesByFirstChar[key] = list
         }
         // Cheap incremental prefix index update for this code
@@ -736,6 +803,8 @@ final class DictionaryStore {
     /// Exact-length keys first (`8?9` → 819/849/879/889/899 incl. 策…), then longer
     /// codes that share the pattern as a prefix. Cap is on *candidates*, not raw keys —
     /// otherwise phrase keys like 809xxx starve 選字 (889 was index ~547 of 768).
+    /// Uses `wildcardResultCap` (not `prefixResultCap`) so busy patterns like `4?` /
+    /// `3?3` still return every exact-length 選字 for paging.
     func candidatesWildcard(for pattern: String, kind: CandidateKind = .all) -> [String] {
         if !pattern.contains("?") {
             return candidates(for: pattern, kind: kind)
@@ -772,7 +841,7 @@ final class DictionaryStore {
             }
             for c in list where seen.insert(c).inserted {
                 out.append(c)
-                if out.count >= prefixResultCap { return out }
+                if out.count >= wildcardResultCap { return out }
             }
         }
         return out

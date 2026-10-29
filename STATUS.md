@@ -1,3 +1,83 @@
+## Local 0.2.40 (build 42) — wildcard 選字 no silent cap (4?99 / busy ?)
+
+Ask (t395u): Mac wildcard `?` 選字 must show/reach ALL matching characters like iOS 0.1.8 —
+no silent truncation that buries chars (e.g. 林 for `4?99`). Confirmed Mac is not the
+iOS-style UI `prefix(24)` hard-cap; CandidateWindow already pages `pageSize=9` through
+the full array.
+
+### Root cause
+- `candidatesWildcard` shared `prefixResultCap = 120` with ordinary prefix expansion.
+- `4?99` exact-length 選字 is only ~71 (林 @ index 31) so it already fit under 120 after
+  the 0.2.37 exact-length-first fix — but **103+** single-`?` patterns exceed 120
+  (worst `4?` → 560 exact-length chars). Those were silently truncated; paging never
+  saw the dropped chars.
+- No other UI hard-cap found on Mac.
+
+### Fix
+- Dedicated `wildcardResultCap = 600` used only by `candidatesWildcard` (mirrors iOS
+  0.1.8). `prefixResultCap = 120` unchanged for non-wildcard prefix queries.
+- Exact-length-first + cap-on-words behavior retained.
+- Prove: `swift scripts/prove_wildcard_4x99.swift`
+
+### Versions
+- Mac **0.2.40** (42)
+- iOS unchanged (already 0.1.8 / wildcardResultCap 600)
+
+Install: `scripts/build.sh && scripts/install.sh` → `~/Library/Input Methods/Ckcsys.app`
+No GitHub push/release.
+
+---
+
+## Local 0.2.39 (build 41) — 聯想 last-字 first + iOS caret underline
+
+Ask: when context is 香港, show 港… guesses before 香港…; do not invent linguistics — reorder seed priority. Also underline typed digits in the iOS caret (Mac already underlines marked text).
+
+### Fix
+- `bestAssociation`: walk suffixes **shortest → longest**; merge lexicon continuations with short-seed first, dedupe (short wins). Primary `associationSeed` = shortest hit.
+- Commit/suffix insert: match the **longest context-suffix that prefixes the picked phrase** so 香港人 still strips 香港 when primary seed is 港.
+- iOS only: caret digit buffer inserts each digit + U+0332 combining underline (proxy has no attributed marked text). Space-confirm replaces with plain digits.
+- Mac marked-text underline: **unchanged**.
+
+### Versions
+- Mac **0.2.39** (41)
+- iOS **0.1.4** (16)
+
+Verify: `python3 scripts/prove_association_seed.py`
+Mac: type 香 then 港 → 選詞 leads with 港…; 香港… lower if present.
+iOS: type `88` → caret shows underlined 8̲8̲.
+
+Install: `scripts/build.sh && scripts/install.sh` (Mac). iOS device via xcodebuild + devicectl.
+
+---
+
+## Local 0.2.38 (build 40) — smarter 聯想: multi-char / growing seed
+
+Ask: keep guessing 詞 after one **or more** committed 字/詞 (build toward a longer phrase), not only the last single 字.
+
+### Root cause
+Association seeded only from the last committed single character (`traditional.count == 1`),
+indexed by first-char only, and **did not re-associate** after an association phrase pick
+(or after a multi-char 選詞 commit). So 香 → guesses, then 港 → only 港… (or nothing), never 香港….
+
+### Fix (Mac + iOS, same semantics)
+- Keep `associationContext` = recent Traditional committed run (cap 6), surviving digit-dismiss.
+- On each CJK commit: append (or replace trailing seed with full phrase on 聯想 pick).
+- `bestAssociation`: longest **suffix** of context with lexicon continuations (`word.count > seed`).
+- `phrasesStarting` accepts multi-char prefixes (filter first-char / SQL LIKE index).
+- Continuations sorted **shorter-first** (then pd) so 香港人 beats 20-char company names; index pool 400 / show 90.
+- Esc / 標點 / clear reset context. No GitHub. Windows PC Fix untouched.
+
+### Example
+1. Commit 香 → 選詞 shows 香港 / 香煙 / …
+2. Commit 港 (new code) or pick 香港 → seed **香港** → 香港人 / 香港中文大學 / …
+3. Pick 香港人 → if no longer 香港人…, fall back to suffix 港人 (港人治港…), not 香港 (avoids doubling 人).
+
+Verify: `python3 scripts/prove_association_seed.py`
+
+Install: `~/Library/Input Methods/Ckcsys.app` (Mac). iOS 0.1.3 (15) on device when possible.
+
+---
+
 ## Local 0.2.37 (build 39) — wildcard `8?9` 選字 includes 889
 
 Ask: `8?9` must show 選字 for codes matching `8[0-9]9` including 889 (策/築/繁…).

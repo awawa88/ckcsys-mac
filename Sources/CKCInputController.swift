@@ -5,7 +5,8 @@ import Carbon.HIToolbox
 /// CKC / Ckcsys IMK controller.
 /// Digit entry builds the composition code (max 6). Two-column CandidateWindow: chars | phrases.
 /// T/* = 詞 then 1–9 pick; Y// = 字 then 1–9 pick; −/= page; Space commit.
-/// After committing any single 字: show 聯想 phrases starting with that char; digit picks need 選詞 first
+/// After committing one or more 字/詞: show 聯想 phrases continuing the recent committed run
+/// (longest seed with lexicon hits, e.g. 香→港 → seed 香港…). Digit picks need 選詞 first
 /// (選詞 also sets marked caret " **" like normal phrase mode).
 /// Association commit inserts only the suffix after the seed (already in the document).
 /// Auto 選詞/選字 (marked **/ *) at a dead-end (!hasLongerCode), OR exact-詞 with no 字
@@ -25,7 +26,11 @@ class CKCInputController: IMKInputController {
     private var selectedIndex: Int = 0
     private weak var currentClient: AnyObject?
 
-    /// After committing a single 字: lexicon phrases that start with that character (聯想).
+    /// Recent Traditional committed run used as 聯想 context (grows across 字/詞; capped).
+    /// Survives digit-dismiss of the candidate panel so 香 then 港 can seed 香港….
+    private var associationContext: String = ""
+    private let associationContextMaxLen = 6
+    /// Active 聯想 seed (longest suffix of context with lexicon hits) + candidate phrases.
     /// Shown automatically; digit picks require 選詞 (T / ×) first — otherwise digits start a fresh code.
     private var associationSeed: String = ""
     private var associationPhrases: [String] = []
@@ -1186,10 +1191,11 @@ class CKCInputController: IMKInputController {
         // Association pick: seed 字 is already in the document — insert only the suffix
         // (習慣 → 慣 when seed is 習). Candidates still list full phrases for readability.
         let fromAssociation = !associationSeed.isEmpty
+        let matchedSeed = fromAssociation ? associationSeedMatching(phrase: text) : ""
         let insertSource: String
         if fromAssociation {
-            insertSource = associationSuffixToInsert(phrase: text)
-            ckcLog("association commit phrase='\(text)' seed='\(associationSeed)' suffix='\(insertSource)'")
+            insertSource = associationSuffixToInsert(phrase: text, seed: matchedSeed)
+            ckcLog("association commit phrase='\(text)' seed='\(matchedSeed)' primary='\(associationSeed)' suffix='\(insertSource)'")
         } else {
             insertSource = text
         }
@@ -1216,14 +1222,57 @@ class CKCInputController: IMKInputController {
         selectedIndex = 0
         // Lexicon association uses Traditional form (same as candidate lists).
         let traditional = text
+        let priorSeed = fromAssociation ? matchedSeed : associationSeed
         clearAssociation(hideWindow: false)
         CandidateWindow.shared.hide()
         NSLog("[CKC] committed %@ (outputMode=%@ assoc=%d)", outputText, StatusConsole.shared.outputMode.rawValue, fromAssociation ? 1 : 0)
-        // Any single 字 → show common phrases starting with that character (習 is just an example).
-        // Do not re-associate on an association suffix commit (even if suffix is one 字).
-        if !fromAssociation && traditional.count == 1 {
-            beginAssociation(for: traditional, client: client)
+        // Grow recent run: association pick replaces trailing matched seed with the full phrase;
+        // normal commit appends. Then prefer shortest-seed 聯想 (last 字 first).
+        if isHanCommit(traditional) {
+            appendAssociationContext(traditional, replacingSeed: fromAssociation ? priorSeed : nil)
+            beginAssociationFromContext(client: client)
+        } else {
+            associationContext = ""
         }
+    }
+
+    private func isHanCommit(_ s: String) -> Bool {
+        s.contains { ch in
+            ch.unicodeScalars.contains { u in
+                let v = u.value
+                return (0x4E00...0x9FFF).contains(v) || (0x3400...0x4DBF).contains(v) || (0xF900...0xFAFF).contains(v)
+            }
+        }
+    }
+
+    private func appendAssociationContext(_ traditional: String, replacingSeed: String?) {
+        var ctx = associationContext
+        if let seed = replacingSeed, !seed.isEmpty, ctx.hasSuffix(seed) {
+            ctx = String(ctx.dropLast(seed.count)) + traditional
+        } else if let seed = replacingSeed, !seed.isEmpty, ctx.isEmpty {
+            // Seed was shown but context was empty (edge) — use full phrase.
+            ctx = traditional
+        } else {
+            ctx += traditional
+        }
+        if ctx.count > associationContextMaxLen {
+            ctx = String(ctx.suffix(associationContextMaxLen))
+        }
+        associationContext = ctx
+    }
+
+    /// Longest context-suffix that prefixes `phrase` (needed when 選詞 merges short+long seeds).
+    private func associationSeedMatching(phrase: String) -> String {
+        let chars = Array(associationContext)
+        let upper = min(chars.count, associationContextMaxLen)
+        for len in stride(from: upper, through: 1, by: -1) {
+            let seed = String(chars[(chars.count - len)...])
+            if phrase.hasPrefix(seed) { return seed }
+            let seedS = convertToSimplified(seed)
+            let phraseS = convertToSimplified(phrase)
+            if phraseS.hasPrefix(seedS) { return seed }
+        }
+        return associationSeed
     }
 
     /// Suffix after the association seed for document insert.
@@ -1231,8 +1280,8 @@ class CKCInputController: IMKInputController {
     /// form from the phrase. If Traditional prefix fails (繁/簡 edge), match via simplified
     /// forms and drop the same character count from the Traditional phrase so outputMode
     /// conversion still runs on Traditional text. Phrase == seed → empty (dismiss, no insert).
-    private func associationSuffixToInsert(phrase: String) -> String {
-        let seed = associationSeed
+    private func associationSuffixToInsert(phrase: String, seed: String? = nil) -> String {
+        let seed = seed ?? associationSeedMatching(phrase: phrase)
         guard !seed.isEmpty else { return phrase }
         if phrase.hasPrefix(seed) {
             return String(phrase.dropFirst(seed.count))
@@ -1254,13 +1303,14 @@ class CKCInputController: IMKInputController {
         phraseCandidates = []
         lookKind = .all
         selectedIndex = 0
+        associationContext = ""
         clearAssociation()
         if let client = (client as? IMKTextInput) ?? (currentClient as? IMKTextInput) {
             client.setMarkedText("", selectionRange: NSRange(location: 0, length: 0), replacementRange: NSRange(location: NSNotFound, length: 0))
         }
     }
 
-    // MARK: - Association (聯想 after single 字)
+    // MARK: - Association (聯想 from recent committed run)
 
     private var hasAssociation: Bool { !associationPhrases.isEmpty }
 
@@ -1287,26 +1337,26 @@ class CKCInputController: IMKInputController {
         }
     }
 
-    private func beginAssociation(for character: String, client: Any?) {
-        guard character.count == 1 else {
+    /// Prefer shortest suffix (last 字) of `associationContext` with lexicon hits; longer
+    /// multi-char continuations follow at lower priority inside `bestAssociation`.
+    private func beginAssociationFromContext(client: Any?) {
+        guard let hit = DictionaryStore.shared.bestAssociation(
+            for: associationContext,
+            maxLen: associationContextMaxLen
+        ) else {
             clearAssociation()
+            ckcLog("association none for context='\(associationContext)'")
             return
         }
-        let phrases = DictionaryStore.shared.phrasesStarting(with: character)
-        guard !phrases.isEmpty else {
-            clearAssociation()
-            ckcLog("association none for '\(character)'")
-            return
-        }
-        associationSeed = character
-        associationPhrases = phrases
+        associationSeed = hit.seed
+        associationPhrases = hit.phrases
         associationPickEnabled = false
         lookKind = .phrases
         charCandidates = []
-        phraseCandidates = phrases
+        phraseCandidates = hit.phrases
         selectedIndex = 0
         showAssociationWindow(client: client)
-        ckcLog("association show seed='\(character)' phrases=\(phrases.count) (pick after 選詞 only)")
+        ckcLog("association show seed='\(hit.seed)' context='\(associationContext)' phrases=\(hit.phrases.count) (pick after 選詞 only)")
     }
 
     private func showAssociationWindow(client: Any?) {
@@ -1338,6 +1388,7 @@ class CKCInputController: IMKInputController {
         punctMode = true
         punctPageIndex = 0
         buffer = ""
+        associationContext = ""
         clearAssociation(hideWindow: false)
         lookKind = .characters
         charCandidates = []
