@@ -1,3 +1,69 @@
+## Local 0.2.45 (build 47) — remove 林家聰 from shared lexicon
+
+Ask: drop **林家聰** (443016) from bundled cht_cimb on Mac/iOS/web; keep **林家謙** (443038).
+500111 **抵玩** stays rank 1.
+
+Versions: Mac **0.2.45** (47) · iOS **0.1.60** (72) · web tables synced
+
+---
+
+## Local 0.2.44 (build 46) — promote 500111 → 抵玩 (U+62B5) to rank 1
+
+Ask: 500111 must surface **抵玩** (抵 U+62B5). It was already in lexicon but late xh so not usable; false 扺玩 (U+627A) cancelled.
+
+- Removed any `500111\t扺玩` row.
+- Moved/rewrote `500111\t抵玩` to early xh + pd=65500 (rank 1 under code).
+- Other Andrew customs unchanged in shared cht_cimb; iOS sqlite rebuild; web tables synced.
+
+Versions: Mac **0.2.44** (46) · iOS **0.1.59** (71) · web tables synced
+
+---
+
+## Local 0.2.43 (build 45) — shared lexicon: Andrew custom phrases
+
+Ask: put custom CKC phrases in the **shared** bundled lexicon (not only local user_phrases)
+so web / iOS / Mac all get them.
+
+- Merged into `Resources/tables/cht_cimb_VISTA.tsv` (srm/hz/pd/xh); early xh so they rank first under their code.
+- Added: 千與千尋 047017, 但係 062002, 有冇 400400, 林家聰 443016, 林家謙 443038, 真係 48002, 鍾意 801333.
+- Already present (dedup skip): 習近平 173014, 抵玩 500111.
+- Same TSV copied to ckcsys-ios + ckcsys-web; iOS `lexicon.sqlite` rebuilt.
+
+Versions: Mac **0.2.43** (45) · iOS **0.1.58** (70) · web tables synced
+
+---
+
+## Local 0.2.42 (build 44) — next-char 選字 (not 選詞)
+
+Ask: single-character continuations (e.g. 人 after 中國) must list in **選字**, not 選詞.
+User picks 人 from the 選字 area.
+
+- `bestAssociation` returns `(seed, phrases, nextChars)`: **選詞** = multi-char phrases only;
+  **選字** = lexicon next-char guesses (same frequency ranking as 0.2.41).
+- Association window shows both columns; Y/÷ arms 選字 digit pick; T/× arms 選詞.
+- Commit from 選字 during 聯想 appends context (no seed replace).
+- Web + iOS mirrored; prove: `scripts/prove_association_seed.py`, web `npm run prove`.
+
+Versions: Mac **0.2.42** (44) · iOS **0.1.44** (56) · web **0.0.1**
+
+---
+
+## Local 0.2.41 (build 43) — 聯想 next-char (中國→人)
+
+Ask: after a committed phrase like 中國, 選詞 should also list a guessing single character
+(人) when lexicon has continuations (中國人 / 中國人民…). Same for other phrases.
+
+- `bestAssociation`: after one page of last-字 phrases, inject table-backed **next-char**
+  continuations from multi-char seeds (ranked by how often that 字 continues the seed
+  in the lexicon, e.g. 中國→人); then more short / longer phrases.
+- `associationIndexCap` 400 → 6000 so mid-pd hits like 中國人 stay in the Mac/web index.
+- Commit path: single-字 next-char picks insert as-is and **append** context (no seed replace).
+- Web + iOS mirrored; prove: `scripts/prove_association_seed.py`, web `npm run prove`.
+
+Versions: Mac **0.2.41** (43) · iOS **0.1.43** (55) · web **0.0.1**
+
+---
+
 ## Local 0.2.40 (build 42) — wildcard 選字 no silent cap (4?99 / busy ?)
 
 Ask (t395u): Mac wildcard `?` 選字 must show/reach ALL matching characters like iOS 0.1.8 —
