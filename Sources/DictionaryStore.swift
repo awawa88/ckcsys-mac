@@ -21,9 +21,9 @@ final class DictionaryStore {
     /// Cap phrases shown for 聯想 / association (after one or more committed chars).
     private let associationCap = 90
     /// Per-first-char pool size in the association index. Larger than `associationCap` so
-    /// multi-char seeds (e.g. 香港) can still find shorter high-value continuations like 香港人
+    /// multi-char seeds (e.g. 香港/中國) keep mid-pd hits like 香港人/中國人; densest first-char ~5k
     /// after long high-pd names fill the display cap.
-    private let associationIndexCap = 400
+    private let associationIndexCap = 6000
     /// firstChar → phrases starting with that char (pd-desc, capped). Built at load.
     private var phrasesByFirstChar: [String: [String]] = [:]
     /// Accumulator during table load: firstChar → [(pd, phrase)].
@@ -237,10 +237,33 @@ final class DictionaryStore {
         return Array(filtered.prefix(lim))
     }
 
-    /// Prefer shortest viable suffix of `context` (esp. last 字) for 選詞, then append
-    /// longer multi-char context continuations at lower priority (reserved slots). No invented
-    /// linguistics — only lexicon hits. `seed` is the primary (shortest) hit.
-    func bestAssociation(for context: String, maxLen: Int = 6, limit: Int? = nil) -> (seed: String, phrases: [String])? {
+    /// Single-character next steps after `seed` from lexicon continuations
+    /// (e.g. seed 中國 + phrase 中國人 → 人). Ranked by how often that 字 continues
+    /// `seed` across the given phrases (table frequency only; no invented linguistics).
+    func nextCharContinuations(from phrases: [String], seed: String) -> [String] {
+        guard !seed.isEmpty else { return [] }
+        let seedCount = seed.count
+        var counts: [String: Int] = [:]
+        var order: [String] = []
+        for p in phrases {
+            guard p.count > seedCount, p.hasPrefix(seed) else { continue }
+            let idx = p.index(p.startIndex, offsetBy: seedCount)
+            let ch = String(p[idx])
+            if counts[ch] == nil { order.append(ch) }
+            counts[ch, default: 0] += 1
+        }
+        return order.sorted { a, b in
+            let ca = counts[a] ?? 0
+            let cb = counts[b] ?? 0
+            if ca != cb { return ca > cb }
+            return (order.firstIndex(of: a) ?? 0) < (order.firstIndex(of: b) ?? 0)
+        }
+    }
+
+    /// Prefer shortest viable suffix of `context` (esp. last 字) for 選詞 (multi-char
+    /// phrases only), plus separate single-字 next-char guesses for 選字 (中國→人).
+    /// No invented linguistics — only lexicon hits. `seed` is the primary (shortest) hit.
+    func bestAssociation(for context: String, maxLen: Int = 6, limit: Int? = nil) -> (seed: String, phrases: [String], nextChars: [String])? {
         let chars = Array(context)
         guard !chars.isEmpty else { return nil }
         let upper = min(chars.count, max(1, maxLen))
@@ -250,22 +273,33 @@ final class DictionaryStore {
         var shortPhrases: [String] = []
         var longerPhrases: [String] = []
         var longerSeen = Set<String>()
+        var nextChars: [String] = []
+        var nextSeen = Set<String>()
         // Shortest → longest so 港… leads before 香港… when context is 香港.
         for len in 1...upper {
             let seed = String(chars[(chars.count - len)...])
-            let phrases = phrasesStarting(with: seed, limit: lim)
-            guard !phrases.isEmpty else { continue }
+            let phrases = phrasesStarting(with: seed, limit: lim).filter { $0.count >= 2 }
+            guard !phrases.isEmpty || len >= 2 else { continue }
             if primarySeed == nil {
-                primarySeed = seed
-                shortPhrases = phrases
+                if !phrases.isEmpty {
+                    primarySeed = seed
+                    shortPhrases = phrases
+                }
             } else {
                 for p in phrases where !shortPhrases.contains(p) && longerSeen.insert(p).inserted {
                     longerPhrases.append(p)
                 }
             }
+            // Multi-char seeds: next 字 by lexicon continuation frequency (中國→人) → 選字.
+            if len >= 2 {
+                let wide = phrasesStarting(with: seed, limit: max(lim * 3, 250))
+                for ch in nextCharContinuations(from: wide, seed: seed) where nextSeen.insert(ch).inserted {
+                    nextChars.append(ch)
+                }
+            }
         }
         guard let seed = primarySeed, !shortPhrases.isEmpty else { return nil }
-        // Reserve a few slots so longer multi-char context continuations still appear (lower priority).
+        // 選詞: short last-字 phrases, then longer multi-char context (no single 字).
         var merged: [String]
         if longerPhrases.isEmpty {
             merged = shortPhrases
@@ -275,11 +309,12 @@ final class DictionaryStore {
             merged = Array(shortPhrases.prefix(shortKeep))
             for p in longerPhrases {
                 if merged.count >= lim { break }
-                merged.append(p)
+                if !merged.contains(p) { merged.append(p) }
             }
         }
         if merged.count > lim { merged = Array(merged.prefix(lim)) }
-        return (seed, merged)
+        let nc = Array(nextChars.prefix(45))
+        return (seed, merged, nc)
     }
 
     /// Prefer known Windows exports: zimb (singles) before cimb (phrases).

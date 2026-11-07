@@ -34,6 +34,8 @@ class CKCInputController: IMKInputController {
     /// Shown automatically; digit picks require 選詞 (T / ×) first — otherwise digits start a fresh code.
     private var associationSeed: String = ""
     private var associationPhrases: [String] = []
+    /// Single-字 next-char guesses for 選字 (中國→人); multi-char stay in associationPhrases.
+    private var associationNextChars: [String] = []
     private var associationPickEnabled: Bool = false
 
     /// Windows CKC: idle keypad "-" (標點符號鍵) opens 標點 picker; digits then commit.
@@ -582,7 +584,7 @@ class CKCInputController: IMKInputController {
             && typedChars != "?"
             && (typedChars == "/" || chars == "/" || keyCode == Int(kVK_ANSI_Slash))
         let isCharEnd =
-            (composing && lower == "y" && flags.isEmpty) ||
+            ((composing || hasAssociation) && lower == "y" && flags.isEmpty) ||
             keyCode == kVK_ANSI_KeypadDivide ||
             isBareSlash
 
@@ -592,11 +594,24 @@ class CKCInputController: IMKInputController {
             associationPickEnabled = true
             lookKind = .phrases
             phraseCandidates = associationPhrases
-            charCandidates = []
+            charCandidates = associationNextChars
             selectedIndex = 0
             showAssociationWindow(client: sender)
             updateMarked(client: sender)
             ckcLog("association 選詞 armed seed='\(associationSeed)' phrases=\(associationPhrases.count) marked=' **'")
+            return true
+        }
+
+        // Association 選字: Y / ÷ arms digit picks on next-char list (中國→人).
+        if !composing && !punctMode && hasAssociation && !associationNextChars.isEmpty && isCharEnd && !blocked {
+            associationPickEnabled = true
+            lookKind = .characters
+            charCandidates = associationNextChars
+            phraseCandidates = associationPhrases
+            selectedIndex = 0
+            showAssociationWindow(client: sender)
+            updateMarked(client: sender)
+            ckcLog("association 選字 armed seed='\(associationSeed)' nextChars=\(associationNextChars.count) marked=' *'")
             return true
         }
 
@@ -785,8 +800,10 @@ class CKCInputController: IMKInputController {
         if keyCode == kVK_Space || keyCode == kVK_Return || keyCode == kVK_ANSI_KeypadEnter {
             if hasAssociation && !composing {
                 if associationPickEnabled {
-                    if let pick = CandidateWindow.shared.selectedCandidate
-                        ?? phraseCandidates.first {
+                    let fallback = lookKind == .characters
+                        ? (charCandidates.first ?? phraseCandidates.first)
+                        : (phraseCandidates.first ?? charCandidates.first)
+                    if let pick = CandidateWindow.shared.selectedCandidate ?? fallback {
                         commit(pick, client: sender)
                         return true
                     }
@@ -857,12 +874,20 @@ class CKCInputController: IMKInputController {
                 ckcLog("digit \(digit) inactive-source pick allowed look=\(String(describing: lookKind)) src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue)")
             }
 
-            // Association after 字 commit: digits pick ONLY when 選詞 armed; else start a fresh code.
+            // Association after 字 commit: digits pick ONLY when 選字/選詞 armed; else start a fresh code.
             if hasAssociation && buffer.isEmpty && !punctMode && flags.isEmpty {
                 if associationPickEnabled && digit >= 1 && digit <= 9 {
                     syncAssociationWindow(near: sender)
+                    if lookKind == .characters {
+                        if let text = CandidateWindow.shared.selectCharOnPage(digit) {
+                            ckcLog("association 選字 pick digit=\(digit) → '\(text)' seed='\(associationSeed)'")
+                            commit(text, client: sender)
+                            return true
+                        }
+                        return true
+                    }
                     if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
-                        ckcLog("association pick digit=\(digit) → '\(text)' seed='\(associationSeed)'")
+                        ckcLog("association 選詞 pick digit=\(digit) → '\(text)' seed='\(associationSeed)'")
                         commit(text, client: sender)
                         return true
                     }
@@ -1190,12 +1215,23 @@ class CKCInputController: IMKInputController {
 
         // Association pick: seed 字 is already in the document — insert only the suffix
         // (習慣 → 慣 when seed is 習). Candidates still list full phrases for readability.
+        // Next-char guesses (中國→人) are single 字 that do not prefix-match the seed —
+        // insert as-is and append to context (do not replace trailing seed).
         let fromAssociation = !associationSeed.isEmpty
         let matchedSeed = fromAssociation ? associationSeedMatching(phrase: text) : ""
+        let nextCharPick = fromAssociation && (
+            associationNextChars.contains(text)
+            || isAssociationNextCharPick(text, matchedSeed: matchedSeed)
+        )
         let insertSource: String
         if fromAssociation {
-            insertSource = associationSuffixToInsert(phrase: text, seed: matchedSeed)
-            ckcLog("association commit phrase='\(text)' seed='\(matchedSeed)' primary='\(associationSeed)' suffix='\(insertSource)'")
+            if nextCharPick {
+                insertSource = text
+                ckcLog("association next-char commit '\(text)' context='\(associationContext)' primary='\(associationSeed)'")
+            } else {
+                insertSource = associationSuffixToInsert(phrase: text, seed: matchedSeed)
+                ckcLog("association commit phrase='\(text)' seed='\(matchedSeed)' primary='\(associationSeed)' suffix='\(insertSource)'")
+            }
         } else {
             insertSource = text
         }
@@ -1227,9 +1263,10 @@ class CKCInputController: IMKInputController {
         CandidateWindow.shared.hide()
         NSLog("[CKC] committed %@ (outputMode=%@ assoc=%d)", outputText, StatusConsole.shared.outputMode.rawValue, fromAssociation ? 1 : 0)
         // Grow recent run: association pick replaces trailing matched seed with the full phrase;
-        // normal commit appends. Then prefer shortest-seed 聯想 (last 字 first).
+        // next-char pick appends only; normal commit appends. Then shortest-seed 聯想.
         if isHanCommit(traditional) {
-            appendAssociationContext(traditional, replacingSeed: fromAssociation ? priorSeed : nil)
+            let replace: String? = (fromAssociation && !nextCharPick) ? priorSeed : nil
+            appendAssociationContext(traditional, replacingSeed: replace)
             beginAssociationFromContext(client: client)
         } else {
             associationContext = ""
@@ -1275,6 +1312,19 @@ class CKCInputController: IMKInputController {
         return associationSeed
     }
 
+
+    /// True when `phrase` is a single-字 next-char guess (does not continue matched seed).
+    private func isAssociationNextCharPick(_ phrase: String, matchedSeed: String) -> Bool {
+        guard phrase.count == 1 else { return false }
+        if !matchedSeed.isEmpty {
+            if phrase.hasPrefix(matchedSeed) { return false }
+            let seedS = convertToSimplified(matchedSeed)
+            let phraseS = convertToSimplified(phrase)
+            if phraseS.hasPrefix(seedS) { return false }
+        }
+        return true
+    }
+
     /// Suffix after the association seed for document insert.
     /// Seed is stored in the same Traditional lexicon form used for phrase lookup; strip that
     /// form from the phrase. If Traditional prefix fails (繁/簡 edge), match via simplified
@@ -1312,12 +1362,13 @@ class CKCInputController: IMKInputController {
 
     // MARK: - Association (聯想 from recent committed run)
 
-    private var hasAssociation: Bool { !associationPhrases.isEmpty }
+    private var hasAssociation: Bool { !associationPhrases.isEmpty || !associationNextChars.isEmpty }
 
     private func clearAssociation(hideWindow: Bool = true) {
         let wasArmed = associationPickEnabled
         associationSeed = ""
         associationPhrases = []
+        associationNextChars = []
         associationPickEnabled = false
         if buffer.isEmpty {
             // Avoid stale lookKind=.phrases stealing the next digit as a pick.
@@ -1350,13 +1401,14 @@ class CKCInputController: IMKInputController {
         }
         associationSeed = hit.seed
         associationPhrases = hit.phrases
+        associationNextChars = hit.nextChars
         associationPickEnabled = false
         lookKind = .phrases
-        charCandidates = []
+        charCandidates = hit.nextChars
         phraseCandidates = hit.phrases
         selectedIndex = 0
         showAssociationWindow(client: client)
-        ckcLog("association show seed='\(hit.seed)' context='\(associationContext)' phrases=\(hit.phrases.count) (pick after 選詞 only)")
+        ckcLog("association show seed='\(hit.seed)' context='\(associationContext)' phrases=\(hit.phrases.count) nextChars=\(hit.nextChars.count) (選字=next-char, 選詞=phrases)")
     }
 
     private func showAssociationWindow(client: Any?) {
@@ -1366,17 +1418,41 @@ class CKCInputController: IMKInputController {
     private func syncAssociationWindow(near client: Any?) {
         guard hasAssociation else { return }
         var chrome = associationSeed
-        if associationPickEnabled { chrome += " **" }
+        if associationPickEnabled {
+            chrome += (lookKind == .characters) ? " *" : " **"
+        }
+        let chars = associationNextChars
+        let phrases = associationPhrases
+        let mode: CandidateDisplayMode
+        let focus: CandidateColumn
+        if associationPickEnabled && lookKind == .characters && !chars.isEmpty {
+            mode = chars.isEmpty ? .phrases : (phrases.isEmpty ? .characters : .both)
+            focus = .characters
+        } else if associationPickEnabled && lookKind == .phrases {
+            mode = phrases.isEmpty ? .characters : (chars.isEmpty ? .phrases : .both)
+            focus = .phrases
+        } else {
+            // Idle association: show 選字 (next-char) + 選詞 (phrases); focus 選詞.
+            if !chars.isEmpty && !phrases.isEmpty {
+                mode = .both
+            } else if !chars.isEmpty {
+                mode = .characters
+            } else {
+                mode = .phrases
+            }
+            focus = phrases.isEmpty ? .characters : .phrases
+        }
         CandidateWindow.shared.show(
             composition: chrome,
-            chars: [],
-            phrases: associationPhrases,
-            mode: .phrases,
-            focus: .phrases,
+            chars: chars,
+            phrases: phrases,
+            mode: mode,
+            focus: focus,
             digitSource: StatusConsole.shared.digitSource,
             near: (client as AnyObject?) ?? currentClient
         )
-        phraseCandidates = associationPhrases
+        charCandidates = chars
+        phraseCandidates = phrases
         selectedIndex = CandidateWindow.shared.globalSelectedIndex
     }
 

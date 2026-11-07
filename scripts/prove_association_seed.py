@@ -41,7 +41,7 @@ def load_by_first():
             if w not in seen:
                 seen.add(w)
                 words.append(w)
-                if len(words) >= 400:
+                if len(words) >= 6000:
                     break
         out[ch] = words
     return out
@@ -58,8 +58,22 @@ def phrases_starting(index, prefix, show_cap=90):
     return filtered[:show_cap]
 
 
+def next_chars(phrases, seed):
+    """Rank next 字 by continuation frequency in phrases (table-backed)."""
+    from collections import Counter
+    counts = Counter()
+    order = []
+    for w in phrases:
+        if len(w) > len(seed) and w.startswith(seed):
+            ch = w[len(seed)]
+            if ch not in counts:
+                order.append(ch)
+            counts[ch] += 1
+    return sorted(order, key=lambda ch: (-counts[ch], order.index(ch)))
+
+
 def best(index, context, max_len=6, show_cap=90):
-    """Shortest viable seed first; longer-suffix continuations after (reserved slots)."""
+    """Shortest seed first → 選詞 multi-char phrases; next-chars separately for 選字."""
     if not context:
         return None
     upper = min(len(context), max_len)
@@ -67,19 +81,26 @@ def best(index, context, max_len=6, show_cap=90):
     short_phrases = []
     longer_phrases = []
     longer_seen = set()
+    next_list = []
+    next_seen = set()
     for length in range(1, upper + 1):
         seed = context[-length:]
-        ph = phrases_starting(index, seed, show_cap=show_cap)
-        if not ph:
-            continue
+        ph = [w for w in phrases_starting(index, seed, show_cap=show_cap) if len(w) >= 2]
         if primary is None:
-            primary = seed
-            short_phrases = ph
+            if ph:
+                primary = seed
+                short_phrases = ph
         else:
             for w in ph:
                 if w not in short_phrases and w not in longer_seen:
                     longer_seen.add(w)
                     longer_phrases.append(w)
+        if length >= 2:
+            wide = phrases_starting(index, seed, show_cap=max(show_cap * 3, 250))
+            for ch in next_chars(wide, seed):
+                if ch not in next_seen:
+                    next_seen.add(ch)
+                    next_list.append(ch)
     if primary is None or not short_phrases:
         return None
     if not longer_phrases:
@@ -91,8 +112,10 @@ def best(index, context, max_len=6, show_cap=90):
         for w in longer_phrases:
             if len(merged) >= show_cap:
                 break
-            merged.append(w)
-    return primary, merged[:show_cap]
+            if w not in merged:
+                merged.append(w)
+    return primary, merged[:show_cap], next_list[:45]
+
 
 
 def main():
@@ -105,7 +128,7 @@ def main():
             ctx = ctx[-6:]
         hit = best(idx, ctx)
         assert hit, f"no hit for {ctx}"
-        seed, ph = hit
+        seed, ph, nc = hit
         print(f"after '{step}' context='{ctx}' seed='{seed}' top={ph[:8]} (n={len(ph)})")
     # After 香港: primary seed is last 字 港 (not 香港)
     assert seed == "港", seed
@@ -124,11 +147,23 @@ def main():
     assert ctx.endswith(prior)
     ctx = ctx[: -len(prior)] + full
     hit = best(idx, ctx)
-    seed, ph = hit
+    seed, ph, nc = hit
     print(f"after pick '{full}' context='{ctx}' seed='{seed}' top={ph[:8]} (n={len(ph)})")
     # Context 香港口 → shortest seed 口 first
     assert seed == "口", seed
     assert ph[0].startswith("口"), ph[:10]
+
+        # 中國 → next-char 人 in 選字 (not 選詞); phrases stay multi-char
+    hit = best(idx, "中國")
+    assert hit, "no hit for 中國"
+    seed, ph, nc = hit
+    print(f"context='中國' seed='{seed}' phrases={ph[:10]} nextChars={nc[:15]} (n_ph={len(ph)} n_nc={len(nc)})")
+    assert seed == "國", seed
+    assert "人" in nc, f"expected next-char 人 in 選字 list, got nc={nc[:20]} ph={ph[:10]}"
+    assert "人" not in ph, f"人 must not appear in 選詞 phrases, got {ph[:20]}"
+    assert all(len(w) >= 2 for w in ph[:20]), f"選詞 must be multi-char only: {ph[:10]}"
+    assert nc.index("人") < 15, (nc.index("人"), nc[:15])
+    assert ph[0].startswith("國"), ph[:10]
     print("PASS")
 
 
