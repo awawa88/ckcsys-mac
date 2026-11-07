@@ -1,0 +1,38 @@
+==> Cleaning /Users/andrewlam/Projects/ckcsys-mac/build/Ckcsys.app
+==> Compiling Swift sources
+==> Copying resources
+==> Bundled tables: 3 tsv file(s)
+-rw-r--r--@ 1 andrewlam  staff  12138384 Nov  7 17:08 /Users/andrewlam/Projects/ckcsys-mac/build/Ckcsys.app/Contents/Resources/tables/cht_cimb_VISTA.tsv
+-rw-r--r--@ 1 andrewlam  staff       207 Nov  7 17:08 /Users/andrewlam/Projects/ckcsys-mac/build/Ckcsys.app/Contents/Resources/tables/cht_punctuation.tsv
+-rw-r--r--@ 1 andrewlam  staff    692450 Nov  7 17:08 /Users/andrewlam/Projects/ckcsys-mac/build/Ckcsys.app/Contents/Resources/tables/cht_zimb_VISTA.tsv
+==> AppIcon.icns bundled
+==> menuIcon.tiff bundled
+==> Ad-hoc codesign
+/Users/andrewlam/Projects/ckcsys-mac/build/Ckcsys.app: replacing existing signature
+==> Verifying bundle
+/Users/andrewlam/Projects/ckcsys-mac/build/Ckcsys.app/Contents/Info.plist: OK
+Ckcsys
+AppIcon
+-rw-r--r--@ 1 andrewlam  staff  1374350 Nov  7 17:08 /Users/andrewlam/Projects/ckcsys-mac/build/Ckcsys.app/Contents/Resources/AppIcon.icns
+-rw-r--r--@ 1 andrewlam  staff     7494 Nov  7 17:08 /Users/andrewlam/Projects/ckcsys-mac/build/Ckcsys.app/Contents/Resources/menuIcon.tiff
+/Users/andrewlam/Projects/ckcsys-mac/build/Ckcsys.app/Contents/Resources/Base.lproj:
+InfoPlist.strings
+
+/Users/andrewlam/Projects/ckcsys-mac/build/Ckcsys.app/Contents/Resources/en.lproj:
+InfoPlist.strings
+
+/Users/andrewlam/Projects/ckcsys-mac/build/Ckcsys.app/Contents/Resources/zh-Hans.lproj:
+InfoPlist.strings
+
+/Users/andrewlam/Projects/ckcsys-mac/build/Ckcsys.app/Contents/Resources/zh-Hant.lproj:
+InfoPlist.strings
+Executable=/Users/andrewlam/Projects/ckcsys-mac/build/Ckcsys.app/Contents/MacOS/Ckcsys
+Identifier=com.andrewlam.inputmethod.ckc
+Format=app bundle with Mach-O thin (arm64)
+CodeDirectory v=20400 size=1238 flags=0x2(adhoc) hashes=32+3 location=embedded
+Signature=adhoc
+Info.plist entries=21
+TeamIdentifier=not set
+Sealed Resources version=2 rules=13 files=14
+Internal requirements count=0 size=12
+BUILD OK: /Users/andrewlam/Projects/ckcsys-mac/build/Ckcsys.app
