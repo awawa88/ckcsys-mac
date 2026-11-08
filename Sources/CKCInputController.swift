@@ -796,10 +796,14 @@ class CKCInputController: IMKInputController {
             }
         }
 
-        // Space / Return → commit highlighted (association: only after 選詞)
+        // Space / Return → commit highlighted (association: when armed OR only phrases available)
         if keyCode == kVK_Space || keyCode == kVK_Return || keyCode == kVK_ANSI_KeypadEnter {
             if hasAssociation && !composing {
-                if associationPickEnabled {
+                let directPhraseOK = associationNextChars.isEmpty && !associationPhrases.isEmpty
+                if associationPickEnabled || directPhraseOK {
+                    if directPhraseOK && lookKind != .phrases {
+                        lookKind = .phrases
+                    }
                     let fallback = lookKind == .characters
                         ? (charCandidates.first ?? phraseCandidates.first)
                         : (phraseCandidates.first ?? charCandidates.first)
@@ -874,9 +878,11 @@ class CKCInputController: IMKInputController {
                 ckcLog("digit \(digit) inactive-source pick allowed look=\(String(describing: lookKind)) src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue)")
             }
 
-            // Association after 字 commit: digits pick ONLY when 選字/選詞 armed; else start a fresh code.
+            // Association after 字 commit: digits pick when 選字/選詞 armed OR when only phrases
+            // (no next-char candidates) — else start a fresh code.
             if hasAssociation && buffer.isEmpty && !punctMode && flags.isEmpty {
-                if associationPickEnabled && digit >= 1 && digit <= 9 {
+                let directPhraseOK = associationNextChars.isEmpty && !associationPhrases.isEmpty
+                if (associationPickEnabled || directPhraseOK) && digit >= 1 && digit <= 9 {
                     syncAssociationWindow(near: sender)
                     if lookKind == .characters {
                         if let text = CandidateWindow.shared.selectCharOnPage(digit) {
@@ -886,8 +892,13 @@ class CKCInputController: IMKInputController {
                         }
                         return true
                     }
+                    // Direct phrase pick when no next-char: ensure lookKind is .phrases
+                    if directPhraseOK && lookKind != .phrases {
+                        lookKind = .phrases
+                    }
                     if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
-                        ckcLog("association 選詞 pick digit=\(digit) → '\(text)' seed='\(associationSeed)'")
+                        let mode = directPhraseOK ? "auto" : "armed"
+                        ckcLog("association 選詞 pick (\(mode)) digit=\(digit) → '\(text)' seed='\(associationSeed)'")
                         commit(text, client: sender)
                         return true
                     }
