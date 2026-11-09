@@ -1,3 +1,17 @@
+## Local 0.2.57 (build 59) — remove candidate pick flash
+
+Ask: don’t need the blue selection flash on Mac. Roll it back.
+
+- Removed 0.2.56 ~90ms systemBlue rounded-box / white-text flash on candidate pick.
+- Restored 0.2.55 selection UI (immediate commit on digit/click/Space/Return).
+- Kept 0.2.55 rules: idle 選詞 gray until ×/T, armed blue headers, association seed prefix blue, keypad `.` delete/close, digits need 選詞 before association pick.
+
+Verify: pick a candidate — no blue flash; insert happens immediately as in 0.2.55.
+
+Versions: Mac **0.2.57** (59)
+
+---
+
 ## Local 0.2.56 (build 58) — candidate pick blue-box flash
 
 Ask: when selecting a character or phrase in the candidate window, flash a blue rounded box (like tapping a CKC digit key / iOS tap select), then commit.
