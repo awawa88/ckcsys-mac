@@ -187,6 +187,7 @@ class CKCInputController: IMKInputController {
         CandidateWindow.shared.onCandidateClicked = { [weak self] text, column in
             guard let self else { return }
             self.ckcLog("clicked candidate '\(text)' column=\(column == .characters ? "char" : "phrase")")
+            // Row already flashed in CandidateWindow.handleRowClick before this callback.
             if self.punctMode {
                 self.commitPunct(text, client: self.currentClient)
             } else {
@@ -517,6 +518,10 @@ class CKCInputController: IMKInputController {
         guard event.type == .keyDown else { return false }
         // If activate raced / was skipped, first keyDown brings StatusConsole back.
         ensureStatusConsoleVisible(near: sender)
+        if CandidateWindow.shared.isSelectionFlashInFlight {
+            ckcLog("keyDown swallowed (selection flash in flight)")
+            return true
+        }
 
         let keyCode = Int(event.keyCode)
         let chars = event.charactersIgnoringModifiers ?? event.characters ?? ""
@@ -706,12 +711,15 @@ class CKCInputController: IMKInputController {
                 if (1...9).contains(d) { idx = d - 1 }
                 else if d == 0 { idx = min(8, max(page.count - 1, 0)) }
                 else { return true }
-                if idx < page.count { commitPunct(page[idx], client: sender) }
+                if idx < page.count {
+                    _ = CandidateWindow.shared.selectCharOnPage(idx + 1)
+                    flashThenCommit(page[idx], client: sender, punct: true)
+                }
                 return true
             }
             if keyCode == kVK_Space || keyCode == kVK_Return || keyCode == kVK_ANSI_KeypadEnter {
                 if let pick = CandidateWindow.shared.selectedCandidate {
-                    commitPunct(pick, client: sender)
+                    flashThenCommit(pick, client: sender, punct: true)
                     return true
                 }
                 exitPunctMode()
@@ -823,7 +831,7 @@ class CKCInputController: IMKInputController {
                         ? (charCandidates.first ?? phraseCandidates.first)
                         : (phraseCandidates.first ?? charCandidates.first)
                     if let pick = CandidateWindow.shared.selectedCandidate ?? fallback {
-                        commit(pick, client: sender)
+                        flashThenCommit(pick, client: sender)
                         return true
                     }
                     return true
@@ -835,7 +843,7 @@ class CKCInputController: IMKInputController {
             if let pick = CandidateWindow.shared.selectedCandidate
                 ?? charCandidates.first
                 ?? phraseCandidates.first {
-                commit(pick, client: sender)
+                flashThenCommit(pick, client: sender)
                 return true
             }
             if composing {
@@ -901,14 +909,14 @@ class CKCInputController: IMKInputController {
                     if lookKind == .characters {
                         if let text = CandidateWindow.shared.selectCharOnPage(digit) {
                             ckcLog("association 選字 pick digit=\(digit) → '\(text)' seed='\(associationSeed)'")
-                            commit(text, client: sender)
+                            flashThenCommit(text, client: sender)
                             return true
                         }
                         return true
                     }
                     if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
                         ckcLog("association 選詞 pick (armed) digit=\(digit) → '\(text)' seed='\(associationSeed)'")
-                        commit(text, client: sender)
+                        flashThenCommit(text, client: sender)
                         return true
                     }
                     return true
@@ -924,7 +932,7 @@ class CKCInputController: IMKInputController {
                     lookKind = .phrases
                     syncCandidateWindow(near: sender)
                     if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
-                        commit(text, client: sender)
+                        flashThenCommit(text, client: sender)
                         return true
                     }
                     return true
@@ -937,7 +945,7 @@ class CKCInputController: IMKInputController {
                     syncCandidateWindow(near: sender)
                     if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
                         ckcLog("phrase-mode pick digit=\(digit) → '\(text)' buffer='\(buffer)'")
-                        commit(text, client: sender)
+                        flashThenCommit(text, client: sender)
                         return true
                     }
                     ckcLog("phrase-mode pick digit=\(digit) miss buffer='\(buffer)' phrases=\(phraseCandidates.count)")
@@ -948,7 +956,7 @@ class CKCInputController: IMKInputController {
                     syncCandidateWindow(near: sender)
                     if let text = CandidateWindow.shared.selectCharOnPage(digit) {
                         ckcLog("char-mode pick digit=\(digit) → '\(text)' buffer='\(buffer)'")
-                        commit(text, client: sender)
+                        flashThenCommit(text, client: sender)
                         return true
                     }
                     ckcLog("char-mode pick digit=\(digit) miss buffer='\(buffer)' chars=\(charCandidates.count)")
@@ -963,7 +971,7 @@ class CKCInputController: IMKInputController {
                 if lookKind == .all && atMaxCode && !charCandidates.isEmpty && phraseCandidates.isEmpty {
                     syncCandidateWindow(near: sender)
                     if let text = CandidateWindow.shared.selectCharOnPage(digit) {
-                        commit(text, client: sender)
+                        flashThenCommit(text, client: sender)
                         return true
                     }
                     return true
@@ -973,7 +981,7 @@ class CKCInputController: IMKInputController {
             // Option/Ctrl+1–9 always picks left column (even in .all / while composing)
             if pickModifiers && digit >= 1 && digit <= 9 && hasCandidates {
                 if let text = CandidateWindow.shared.selectCharOnPage(digit) {
-                    commit(text, client: sender)
+                    flashThenCommit(text, client: sender)
                     return true
                 }
                 return true
@@ -1020,13 +1028,13 @@ class CKCInputController: IMKInputController {
                             if lookKind == .phrases {
                                 if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
                                     ckcLog("auto-phrase-pick commit digit=\(digit) → '\(text)'")
-                                    commit(text, client: sender)
+                                    flashThenCommit(text, client: sender)
                                     return true
                                 }
                             } else if lookKind == .characters {
                                 if let text = CandidateWindow.shared.selectCharOnPage(digit) {
                                     ckcLog("auto-char-pick commit digit=\(digit) → '\(text)'")
-                                    commit(text, client: sender)
+                                    flashThenCommit(text, client: sender)
                                     return true
                                 }
                             }
@@ -1222,6 +1230,7 @@ class CKCInputController: IMKInputController {
     }
 
     private func updateCandidateWindow(client: Any?) {
+        if CandidateWindow.shared.isSelectionFlashInFlight { return }
         if buffer.isEmpty {
             if hasAssociation {
                 showAssociationWindow(client: client)
@@ -1256,8 +1265,24 @@ class CKCInputController: IMKInputController {
         selectedIndex = CandidateWindow.shared.globalSelectedIndex
     }
 
+    /// Flash the listed candidate (~90ms systemBlue rounded box), then the existing commit path.
+    private func flashThenCommit(_ text: String, client: Any?, punct: Bool = false) {
+        let clientObj: Any? = client ?? currentClient
+        CandidateWindow.shared.flashCandidate(text) { [weak self] in
+            guard let self else { return }
+            if punct {
+                self.commitPunct(text, client: clientObj)
+            } else {
+                self.commit(text, client: clientObj)
+            }
+        }
+    }
+
     private func commit(_ text: String, client: Any?) {
-        guard let client = (client as? IMKTextInput) ?? (currentClient as? IMKTextInput) else { return }
+        guard let client = (client as? IMKTextInput) ?? (currentClient as? IMKTextInput) else {
+            CandidateWindow.shared.hide()
+            return
+        }
 
         // Association pick: seed 字 is already in the document — insert only the suffix
         // (習慣 → 慣 when seed is 習). Candidates still list full phrases for readability.

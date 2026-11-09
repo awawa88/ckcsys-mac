@@ -1,3 +1,17 @@
+## Local 0.2.56 (build 58) — candidate pick blue-box flash
+
+Ask: when selecting a character or phrase in the candidate window, flash a blue rounded box (like tapping a CKC digit key / iOS tap select), then commit.
+
+- CandidateRowView: ~90ms systemBlue fill + white text; cornerRadius 6 matching StatusConsole BevelButton (gray 0–9 key caps), continuous curve, not a sharp rect.
+- Paths: armed digit 1–9 (選字/選詞 / auto / 6-digit / Option-Ctrl pick), mouse/trackpad row click, Space/Return on highlighted/first, association picks after 選詞/選字. Direct ，。 keys unchanged.
+- Idle association gray 選詞 / armed blue headers / seed-prefix blue (when not flashing) unchanged. No auto-arm.
+
+Verify: type a code, pick with 1–9 / click / Space — row flashes blue rounded box then inserts.
+
+Versions: Mac **0.2.56** (58)
+
+---
+
 ## Local 0.2.55 (build 57) — 選詞 gray until ×/T
 
 Ask: association guess list may show after commit, but 選詞×/T must not be blue until the phrase key is pressed.

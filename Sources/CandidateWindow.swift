@@ -52,6 +52,11 @@ final class CandidateWindow: NSPanel {
     private var digitPickColumn: CandidateColumn? = nil
     /// Association base (committed seed, e.g. 棋) — blue prefix in phrase rows when they share it.
     private var phrasePrefixHighlight: String = ""
+    /// True while a pick is showing the ~90ms systemBlue flash (commit runs after).
+    private(set) var isSelectionFlashInFlight = false
+    /// Match StatusConsole BevelButton (gray 0–9 key caps): soft rounded rect, not sharp.
+    static let selectionFlashDuration: TimeInterval = 0.09
+    static let selectionFlashCornerRadius: CGFloat = 6
     /// Last known caret position - may be suspicious (near corners/edges).
     /// Always re-query on each show() and upgrade from suspicious to good rects.
     private var lastKnownCaretRect: NSRect?
@@ -318,6 +323,10 @@ final class CandidateWindow: NSPanel {
         phrasePrefixHighlight: String = "",
         near client: AnyObject?
     ) {
+        // Don't clobber the ~90ms pick flash (deferred updateUI / association refresh).
+        if isSelectionFlashInFlight {
+            return
+        }
         self.composition = composition
         self.charCandidates = chars
         self.phraseCandidates = phrases
@@ -411,6 +420,9 @@ final class CandidateWindow: NSPanel {
     }
 
     func hide() {
+        if isSelectionFlashInFlight {
+            return
+        }
         charCandidates = []
         phraseCandidates = []
         composition = ""
@@ -543,6 +555,60 @@ final class CandidateWindow: NSPanel {
         return phraseCandidates[global]
     }
 
+    /// Flash the listed candidate (systemBlue rounded key-cap box + white text ~90ms), then `then`.
+    /// If the row is not on the current page, `then` runs immediately so commit is not dropped.
+    func flashCandidate(_ text: String, then: @escaping () -> Void) {
+        guard !isSelectionFlashInFlight else { return }
+        var column = focusedColumn
+        var pageRow = selectedIndex
+        if selectedCandidate != text {
+            if let found = visibleRow(matching: text) {
+                column = found.column
+                pageRow = found.pageRow
+                focusedColumn = column
+                selectedIndex = pageRow
+                reloadRows()
+            } else {
+                then()
+                return
+            }
+        }
+        flashPageRow(column: column, pageRow: pageRow, then: then)
+    }
+
+    private func visibleRow(matching text: String) -> (column: CandidateColumn, pageRow: Int)? {
+        let start = pageIndex * pageSize
+        let order: [(CandidateColumn, [String])] = [
+            (focusedColumn, focusedList),
+            (
+                focusedColumn == .characters ? .phrases : .characters,
+                focusedColumn == .characters ? phraseCandidates : charCandidates
+            ),
+        ]
+        for (col, list) in order {
+            for i in 0..<pageSize {
+                let global = start + i
+                if global < list.count, list[global] == text {
+                    return (col, i)
+                }
+            }
+        }
+        return nil
+    }
+
+    private func flashPageRow(column: CandidateColumn, pageRow: Int, then: @escaping () -> Void) {
+        let rows = column == .characters ? charRowViews : phraseRowViews
+        guard pageRow >= 0, pageRow < rows.count, !rows[pageRow].isEmpty, !rows[pageRow].isHidden else {
+            then()
+            return
+        }
+        isSelectionFlashInFlight = true
+        rows[pageRow].flashTapBlueBox(duration: Self.selectionFlashDuration) { [weak self] in
+            self?.isSelectionFlashInFlight = false
+            then()
+        }
+    }
+
     var globalSelectedIndex: Int {
         pageIndex * pageSize + selectedIndex
     }
@@ -588,11 +654,16 @@ final class CandidateWindow: NSPanel {
     // MARK: - Mouse click handling
 
     private func handleRowClick(index: Int, column: CandidateColumn) {
+        guard !isSelectionFlashInFlight else { return }
         let global = pageIndex * pageSize + index
         let candidates = (column == .characters) ? charCandidates : phraseCandidates
         guard global >= 0, global < candidates.count else { return }
         let text = candidates[global]
-        onCandidateClicked?(text, column)
+        focusedColumn = column
+        selectedIndex = index
+        flashPageRow(column: column, pageRow: index) { [weak self] in
+            self?.onCandidateClicked?(text, column)
+        }
     }
 
     // MARK: - Cursor
@@ -991,6 +1062,7 @@ private final class CandidateRowView: NSButton {
 
     private var isSelected: Bool = false
     private var isHovered: Bool = false
+    private var isFlashing: Bool = false
     private var didPushCursor: Bool = false
     private var trackingArea: NSTrackingArea?
     private var displayText: String = ""
@@ -1006,7 +1078,12 @@ private final class CandidateRowView: NSButton {
         title = ""
         setButtonType(.momentaryChange)
         wantsLayer = true
-        layer?.cornerRadius = 6
+        // Same 6pt rounding as StatusConsole BevelButton (gray 0–9 key caps).
+        layer?.cornerRadius = CandidateWindow.selectionFlashCornerRadius
+        layer?.masksToBounds = true
+        if #available(macOS 11.0, *) {
+            layer?.cornerCurve = .continuous
+        }
 
         numberLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
         numberLabel.textColor = .secondaryLabelColor
@@ -1088,8 +1165,22 @@ private final class CandidateRowView: NSButton {
     }
 
     @objc private func handleClick() {
-        guard !isEmpty else { return }
+        guard !isEmpty, !isFlashing else { return }
         onClicked?()
+    }
+
+    /// Quick pick flash: systemBlue rounded key-cap box + white text, then commit.
+    fileprivate func flashTapBlueBox(duration: TimeInterval, then commit: @escaping () -> Void) {
+        isFlashing = true
+        applyChrome()
+        needsDisplay = true
+        displayIfNeeded()
+        window?.displayIfNeeded()
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+            self?.isFlashing = false
+            self?.applyChrome()
+            commit()
+        }
     }
 
     /// Drop hover chrome + matching cursor pop (panel hide / reload).
@@ -1148,7 +1239,20 @@ private final class CandidateRowView: NSButton {
     }
 
     private func applyChrome() {
+        layer?.cornerRadius = CandidateWindow.selectionFlashCornerRadius
+        layer?.masksToBounds = true
+        if #available(macOS 11.0, *) {
+            layer?.cornerCurve = .continuous
+        }
         let weight: NSFont.Weight
+        if isFlashing {
+            // Tap/pick flash — filled rounded key-cap (not a sharp rect).
+            layer?.backgroundColor = NSColor.systemBlue.cgColor
+            numberLabel.textColor = .white
+            weight = .semibold
+            paintText(weight: weight, flash: true)
+            return
+        }
         if isSelected {
             // Keyboard / focused selection
             layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
@@ -1164,24 +1268,27 @@ private final class CandidateRowView: NSButton {
             numberLabel.textColor = .secondaryLabelColor
             weight = .medium
         }
-        paintText(weight: weight)
+        paintText(weight: weight, flash: false)
     }
 
     /// Association: committed seed (e.g. 棋) in systemBlue; remainder in labelColor.
-    private func paintText(weight: NSFont.Weight) {
+    /// Flash uses white on the whole string so seed-prefix blue does not fight the box.
+    private func paintText(weight: NSFont.Weight, flash: Bool) {
         let font = NSFont.systemFont(ofSize: 15, weight: weight)
-        let base = NSColor.labelColor
+        let base: NSColor = flash ? .white : .labelColor
         let attr = NSMutableAttributedString(
             string: displayText,
             attributes: [.font: font, .foregroundColor: base]
         )
-        let prefix = highlightPrefix
-        if !prefix.isEmpty, displayText.hasPrefix(prefix) {
-            let utf16Len = (prefix as NSString).length
-            attr.addAttributes(
-                [.foregroundColor: NSColor.systemBlue],
-                range: NSRange(location: 0, length: utf16Len)
-            )
+        if !flash {
+            let prefix = highlightPrefix
+            if !prefix.isEmpty, displayText.hasPrefix(prefix) {
+                let utf16Len = (prefix as NSString).length
+                attr.addAttributes(
+                    [.foregroundColor: NSColor.systemBlue],
+                    range: NSRange(location: 0, length: utf16Len)
+                )
+            }
         }
         textLabel.attributedStringValue = attr
     }
