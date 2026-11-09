@@ -48,6 +48,10 @@ final class CandidateWindow: NSPanel {
     private var phraseRowViews: [CandidateRowView] = []
     /// Active digit mode — drives ÷/× vs Y/T column headers and footer hint.
     private var digitSource: DigitSource = .numpad
+    /// Column whose header (選字÷ / 選詞×) turns blue when digits 1–9 will pick from it.
+    private var digitPickColumn: CandidateColumn? = nil
+    /// Association base (committed seed, e.g. 棋) — blue prefix in phrase rows when they share it.
+    private var phrasePrefixHighlight: String = ""
     /// Last known caret position - may be suspicious (near corners/edges).
     /// Always re-query on each show() and upgrade from suspicious to good rects.
     private var lastKnownCaretRect: NSRect?
@@ -310,6 +314,8 @@ final class CandidateWindow: NSPanel {
         mode: CandidateDisplayMode = .both,
         focus: CandidateColumn? = nil,
         digitSource: DigitSource = StatusConsole.shared.digitSource,
+        digitPickColumn: CandidateColumn? = nil,
+        phrasePrefixHighlight: String = "",
         near client: AnyObject?
     ) {
         self.composition = composition
@@ -317,6 +323,11 @@ final class CandidateWindow: NSPanel {
         self.phraseCandidates = phrases
         self.displayMode = mode
         self.digitSource = digitSource
+        self.phrasePrefixHighlight = phrasePrefixHighlight
+        // Only an explicit digitPickColumn turns headers blue. Do NOT infer from
+        // displayMode — idle association often uses .phrases (phrases-only list)
+        // before ×/T, and 選詞 must stay gray until armed.
+        self.digitPickColumn = digitPickColumn
 
         let hasChars = !chars.isEmpty
         let hasPhrases = !phrases.isEmpty
@@ -407,6 +418,8 @@ final class CandidateWindow: NSPanel {
         pageIndex = 0
         focusedColumn = .characters
         displayMode = .both
+        digitPickColumn = nil
+        phrasePrefixHighlight = ""
         // Reset cached positions for next composition session
         lastKnownCaretRect = nil
         initialFallbackPosition = nil
@@ -546,6 +559,30 @@ final class CandidateWindow: NSPanel {
         let charKey = self.digitSource.charEndKey
         let phraseKey = self.digitSource.phraseEndKey
         hintLabel?.stringValue = "↑↓選  ←→欄  \(phraseKey)後1–9選詞  \(charKey)後1–9選字  −/=翻頁  Space確認"
+        applyDigitPickHeaderColors()
+    }
+
+    /// Blue header text only when digitPickColumn is set (after ×/T or ÷/Y / compose arm).
+    private func applyDigitPickHeaderColors() {
+        let active = NSColor.systemBlue
+        let idle = NSColor.secondaryLabelColor
+        leftTitleLabel?.textColor = (digitPickColumn == .characters) ? active : idle
+        rightTitleLabel?.textColor = (digitPickColumn == .phrases) ? active : idle
+        leftTitleLabel?.needsDisplay = true
+        rightTitleLabel?.needsDisplay = true
+    }
+
+    /// Longest prefix of `seed` that `phrase` starts with (Character-based). Empty if none.
+    /// Covers single-字 seeds (棋→棋手) and multi-字 seeds (香港→香港人).
+    private static func bluePrefix(for phrase: String, seed: String) -> String {
+        guard !seed.isEmpty, !phrase.isEmpty else { return "" }
+        if phrase.hasPrefix(seed) { return seed }
+        let chars = Array(seed)
+        for len in stride(from: chars.count - 1, through: 1, by: -1) {
+            let p = String(chars[..<len])
+            if phrase.hasPrefix(p) { return p }
+        }
+        return ""
     }
 
     // MARK: - Mouse click handling
@@ -606,11 +643,13 @@ final class CandidateWindow: NSPanel {
             if showRight, global < phraseCandidates.count {
                 phraseRowViews[i].isHidden = false
                 let selected = focusedColumn == .phrases && i == selectedIndex
+                let phrase = phraseCandidates[global]
                 phraseRowViews[i].configure(
                     label: "\(i + 1)",
-                    text: phraseCandidates[global],
+                    text: phrase,
                     selected: selected,
-                    labelWidth: 16
+                    labelWidth: 16,
+                    highlightPrefix: Self.bluePrefix(for: phrase, seed: phrasePrefixHighlight)
                 )
             } else {
                 phraseRowViews[i].isHidden = true
@@ -650,6 +689,8 @@ final class CandidateWindow: NSPanel {
             effectView.frame = NSRect(origin: .zero, size: newFrame.size)
         }
         contentStack.layoutSubtreeIfNeeded()
+        // Keep 選字Y/選詞T (and ÷/×) blue across row reloads after arming.
+        applyDigitPickHeaderColors()
     }
 
     private func applyAppearance() {
@@ -952,6 +993,8 @@ private final class CandidateRowView: NSButton {
     private var isHovered: Bool = false
     private var didPushCursor: Bool = false
     private var trackingArea: NSTrackingArea?
+    private var displayText: String = ""
+    private var highlightPrefix: String = ""
 
     private static var lastLogAt: TimeInterval = 0
 
@@ -982,7 +1025,7 @@ private final class CandidateRowView: NSButton {
         textLabel.isSelectable = false
         textLabel.isBordered = false
         textLabel.drawsBackground = false
-        textLabel.allowsEditingTextAttributes = false
+        textLabel.allowsEditingTextAttributes = true
 
         numberLabel.translatesAutoresizingMaskIntoConstraints = false
         textLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -1088,12 +1131,13 @@ private final class CandidateRowView: NSButton {
         }
     }
 
-    func configure(label: String, text: String, selected: Bool, labelWidth: CGFloat = 16) {
+    func configure(label: String, text: String, selected: Bool, labelWidth: CGFloat = 16, highlightPrefix: String = "") {
         isEmpty = text.isEmpty
         isSelected = selected
+        displayText = text
+        self.highlightPrefix = highlightPrefix
 
         numberLabel.stringValue = label
-        textLabel.stringValue = text
         labelWidthConstraint.constant = labelWidth
 
         isEnabled = !isEmpty
@@ -1104,24 +1148,42 @@ private final class CandidateRowView: NSButton {
     }
 
     private func applyChrome() {
+        let weight: NSFont.Weight
         if isSelected {
             // Keyboard / focused selection
             layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
             numberLabel.textColor = .controlAccentColor
-            textLabel.textColor = .labelColor
-            textLabel.font = NSFont.systemFont(ofSize: 15, weight: .semibold)
+            weight = .semibold
         } else if isHovered && !isEmpty {
             // Mouse hover — distinct from selected so clickability is obvious even if cursor stays arrow
             layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.12).cgColor
             numberLabel.textColor = .secondaryLabelColor
-            textLabel.textColor = .labelColor
-            textLabel.font = NSFont.systemFont(ofSize: 15, weight: .medium)
+            weight = .medium
         } else {
             layer?.backgroundColor = NSColor.clear.cgColor
             numberLabel.textColor = .secondaryLabelColor
-            textLabel.textColor = .labelColor
-            textLabel.font = NSFont.systemFont(ofSize: 15, weight: .medium)
+            weight = .medium
         }
+        paintText(weight: weight)
+    }
+
+    /// Association: committed seed (e.g. 棋) in systemBlue; remainder in labelColor.
+    private func paintText(weight: NSFont.Weight) {
+        let font = NSFont.systemFont(ofSize: 15, weight: weight)
+        let base = NSColor.labelColor
+        let attr = NSMutableAttributedString(
+            string: displayText,
+            attributes: [.font: font, .foregroundColor: base]
+        )
+        let prefix = highlightPrefix
+        if !prefix.isEmpty, displayText.hasPrefix(prefix) {
+            let utf16Len = (prefix as NSString).length
+            attr.addAttributes(
+                [.foregroundColor: NSColor.systemBlue],
+                range: NSRange(location: 0, length: utf16Len)
+            )
+        }
+        textLabel.attributedStringValue = attr
     }
 
     /// Append to /tmp/ckc-ime.log + NSLog; throttle noisy cursor/hover lines.

@@ -1,3 +1,114 @@
+## Local 0.2.55 (build 57) — 選詞 gray until ×/T
+
+Ask: association guess list may show after commit, but 選詞×/T must not be blue until the phrase key is pressed.
+
+- Root cause: CandidateWindow inferred digitPickColumn from displayMode=.phrases (phrases-only association), so 選詞 went blue while still unarmed.
+- show()/applyDigitPickHeaderColors: blue only from explicit digitPickColumn (set after ×/T or ÷/Y / compose arm).
+
+Verify: commit 給 → list shows, 選詞× gray → press ×/T → 選詞× blue.
+
+Versions: Mac **0.2.55** (57)
+
+---
+
+## Local 0.2.54 (build 56) — association shows; digits need 選詞 first
+
+Ask (clarifies t911): after committing a 字, show guessing phrases, but require 選詞 (×/T) before digit selection. Digits before that continue compose for other characters. All characters.
+
+- Restored auto-show `beginAssociationFromContext` after Han commit.
+- Removed `directPhraseOK` (only-phrases no longer digit-pick without ×/T).
+- Space/Return and digit picks need `associationPickEnabled`; unarmed digits dismiss list and compose.
+- 選詞× header blues only after arming.
+
+Verify: commit 給 → guess list shows; type digit → compose (list closes); commit 給 → ×/T → digits pick phrases.
+
+Versions: Mac **0.2.54** (56)
+
+---
+
+## Local 0.2.53 (build 55) — no auto association after 字 commit
+
+Ask: after committing 給 (and any other 字), do not auto-open guessing phrases — user may continue typing digits for more characters to form phrases.
+
+- `commit`: removed `beginAssociationFromContext` / context append after Han commit.
+- Candidate window stays closed; next digits start a fresh code.
+- Applies to all characters, not only 給.
+
+Verify: commit 給 → no 棋手-style association box; type more digits → compose normally.
+
+Versions: Mac **0.2.53** (55)
+
+---
+
+## Local 0.2.52 (build 54) — keypad `.` deletes digit / closes selection
+
+Ask: with selection box up and 小鍵盤 on for Chinese, numpad `.` deletes the last typed code digit; if no digits left, closes the selection box. (「以後來說轉軸」was a typo — ignored.)
+
+- Keypad Decimal only in DigitSource.numpad.
+- Composing: removeLast; empty buffer → clearComposition (close box).
+- Not composing but selection/association visible → clearAssociation / clearComposition.
+- No longer treats first `.` as only un-arming 選字/選詞 without deleting.
+
+Verify: 小鍵盤 on, type `28`, press `.` → `2`; `.` again → box closes. Association list + `.` → closes.
+
+Versions: Mac **0.2.52** (54)
+
+---
+
+## Local 0.2.51 (build 53) — association phrase seed in systemBlue
+
+Ask: after committing a 字 (e.g. 棋), phrase guesses 棋手/棋藝/… should show the leading committed character in blue; applies to every association seed, not only 棋.
+
+- CandidateWindow: `phrasePrefixHighlight` from `associationSeed`; phrase rows use attributed text (prefix systemBlue, rest labelColor).
+- Prefix length = longest prefix of the seed that the phrase starts with (usually full seed: 棋→1, 香港→2).
+- Next-char 選字 column unchanged (no prefix tint).
+
+Verify: commit 棋 → association 選詞 list shows blue 棋 + normal remainder on each row.
+
+Versions: Mac **0.2.51** (53)
+
+---
+
+## Local 0.2.50 (build 52) — blue 選字Y / 選詞T (number-row) same as ÷/×
+
+Ask: same blue-header bug for number-row 選字Y / 選詞T after arming with Y/T.
+
+- CandidateWindow.show: if digitPickColumn omitted, infer from armed displayMode (.characters/.phrases) so Y/T and ÷/× stay blue.
+- applyDigitPickHeaderColors: displayMode fallback; re-apply at end of reloadRows so refresh cannot gray out.
+- Headers already use DigitSource labels (選字Y/選詞T vs 選字÷/選詞×); color path is shared.
+
+Verify: Caps Lock → 鍵盤, type `28` then Y — 選字Y systemBlue; T — 選詞T blue.
+
+Versions: Mac **0.2.50** (52)
+
+---
+
+## Local 0.2.49 (build 51) — fix blue 選字÷ after ÷ while composing
+
+Root cause: `updateCandidateWindow` (deferred path used after ÷/× / Y/T) called `CandidateWindow.show` without `digitPickColumn`, so the header reset to gray. Cases that used `syncCandidateWindow` / association already passed it — hence “only some cases”.
+
+- Pass `digitPickColumnForUI()` from `updateCandidateWindow`.
+- Also pass `.characters` for 標點 picker (digits pick marks).
+- Verify: type `28` then ÷ — 選字÷ turns systemBlue.
+
+Versions: Mac **0.2.49** (51)
+
+---
+
+## Local 0.2.48 (build 50) — blue 選字÷ / 選詞× when digit-pick ready
+
+Ask: when ready to choose chars/phrases by typing a digit, 選字÷ or 選詞× should turn blue.
+
+- CandidateWindow: column headers use systemBlue text when that column is digit-pick-ready; otherwise secondaryLabelColor.
+- CKCInputController.digitPickColumnForUI(): blue for armed 選字/選詞 (lookKind characters/phrases), auto-select / 6-digit phrase pick, and association only-phrases (directPhraseOK); idle association with next-char stays unhighlighted until ÷/× or Y/T.
+- Local install only (no ASC / no GitHub release).
+
+Verify: compose until auto 選詞/選字, or press ÷/× (Y/T) — matching header turns blue; while still composing (.all) headers stay gray.
+
+Versions: Mac **0.2.48** (50)
+
+---
+
 ## Local 0.2.45 (build 47) — remove 林家聰 from shared lexicon
 
 Ask: drop **林家聰** (443016) from bundled cht_cimb on Mac/iOS/web; keep **林家謙** (443038).

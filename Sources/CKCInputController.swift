@@ -732,19 +732,38 @@ class CKCInputController: IMKInputController {
             exitPunctMode()
         }
 
-        // Keypad Decimal = 輸入碼刪除鍵 (delete last code digit). Not 。
+        // Keypad Decimal (小鍵盤 `.`) while selection/composition is up:
+        // delete last typed code digit; if no digits left, close the selection box.
+        // Not 。 — only when DigitSource is numpad (Chinese via keypad).
         if keyCode == kVK_ANSI_KeypadDecimal && flags.isEmpty {
+            guard StatusConsole.shared.digitSource == .numpad else {
+                return false
+            }
+            let selectionUp = hasCandidates || hasAssociation || CandidateWindow.shared.isVisible
             if composing {
-                if lookKind != .all {
-                    lookKind = .all
-                    refreshCandidates()
-                    updateUI(client: sender)
-                    return true
-                }
+                // Drop any 選字/選詞 arm and remove one code digit.
+                lookKind = .all
                 buffer.removeLast()
                 selectedIndex = 0
-                refreshCandidates()
-                updateUI(client: sender)
+                if buffer.isEmpty {
+                    // Last digit gone → close selection / clear marked text.
+                    clearComposition(client: sender)
+                    ckcLog("keypad . deleted last digit → closed selection")
+                } else {
+                    refreshCandidates()
+                    updateUI(client: sender)
+                    ckcLog("keypad . delete digit → buffer='\(buffer)'")
+                }
+                return true
+            }
+            if selectionUp {
+                // No digits to delete (association / leftover candidates) → dismiss box.
+                if hasAssociation {
+                    clearAssociation()
+                } else {
+                    clearComposition(client: sender)
+                }
+                ckcLog("keypad . no digits → closed selection")
                 return true
             }
             return false
@@ -796,14 +815,10 @@ class CKCInputController: IMKInputController {
             }
         }
 
-        // Space / Return → commit highlighted (association: when armed OR only phrases available)
+        // Space / Return → commit highlighted (association: only after 選詞/選字 armed)
         if keyCode == kVK_Space || keyCode == kVK_Return || keyCode == kVK_ANSI_KeypadEnter {
             if hasAssociation && !composing {
-                let directPhraseOK = associationNextChars.isEmpty && !associationPhrases.isEmpty
-                if associationPickEnabled || directPhraseOK {
-                    if directPhraseOK && lookKind != .phrases {
-                        lookKind = .phrases
-                    }
+                if associationPickEnabled {
                     let fallback = lookKind == .characters
                         ? (charCandidates.first ?? phraseCandidates.first)
                         : (phraseCandidates.first ?? charCandidates.first)
@@ -813,7 +828,7 @@ class CKCInputController: IMKInputController {
                     }
                     return true
                 }
-                // Without 選詞, Space/Return are normal — dismiss guesses, do not force a phrase.
+                // Without 選詞/選字, Space/Return are normal — dismiss guesses, do not force a phrase.
                 clearAssociation()
                 return false
             }
@@ -878,11 +893,10 @@ class CKCInputController: IMKInputController {
                 ckcLog("digit \(digit) inactive-source pick allowed look=\(String(describing: lookKind)) src=\(digitInfo.source.rawValue) active=\(StatusConsole.shared.digitSource.rawValue)")
             }
 
-            // Association after 字 commit: digits pick when 選字/選詞 armed OR when only phrases
-            // (no next-char candidates) — else start a fresh code.
+            // Association after 字 commit: digits pick ONLY after 選詞 (×/T) or 選字 (÷/Y).
+            // Unarmed list stays visible for browsing, but digits dismiss it and compose.
             if hasAssociation && buffer.isEmpty && !punctMode && flags.isEmpty {
-                let directPhraseOK = associationNextChars.isEmpty && !associationPhrases.isEmpty
-                if (associationPickEnabled || directPhraseOK) && digit >= 1 && digit <= 9 {
+                if associationPickEnabled && digit >= 1 && digit <= 9 {
                     syncAssociationWindow(near: sender)
                     if lookKind == .characters {
                         if let text = CandidateWindow.shared.selectCharOnPage(digit) {
@@ -892,13 +906,8 @@ class CKCInputController: IMKInputController {
                         }
                         return true
                     }
-                    // Direct phrase pick when no next-char: ensure lookKind is .phrases
-                    if directPhraseOK && lookKind != .phrases {
-                        lookKind = .phrases
-                    }
                     if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
-                        let mode = directPhraseOK ? "auto" : "armed"
-                        ckcLog("association 選詞 pick (\(mode)) digit=\(digit) → '\(text)' seed='\(associationSeed)'")
+                        ckcLog("association 選詞 pick (armed) digit=\(digit) → '\(text)' seed='\(associationSeed)'")
                         commit(text, client: sender)
                         return true
                     }
@@ -1131,8 +1140,33 @@ class CKCInputController: IMKInputController {
             mode: mode,
             focus: lookKind == .all ? nil : focus,
             digitSource: StatusConsole.shared.digitSource,
+            digitPickColumn: digitPickColumnForUI(),
             near: (client as AnyObject?) ?? currentClient
         )
+    }
+
+    /// Which column header should turn blue because digits 1–9 will pick from it.
+    private func digitPickColumnForUI() -> CandidateColumn? {
+        if hasAssociation && buffer.isEmpty && !punctMode {
+            // Blue header only after ×/T or ÷/Y arms digit-pick — never while idle-browsing.
+            if associationPickEnabled {
+                if lookKind == .characters && !associationNextChars.isEmpty {
+                    return .characters
+                }
+                if lookKind == .phrases && !associationPhrases.isEmpty {
+                    return .phrases
+                }
+            }
+            return nil
+        }
+        switch lookKind {
+        case .characters:
+            return charCandidates.isEmpty ? nil : .characters
+        case .phrases:
+            return phraseCandidates.isEmpty ? nil : .phrases
+        case .all:
+            return nil
+        }
     }
 
     private func refreshCandidates() {
@@ -1216,6 +1250,7 @@ class CKCInputController: IMKInputController {
             mode: mode,
             focus: focus,
             digitSource: StatusConsole.shared.digitSource,
+            digitPickColumn: digitPickColumnForUI(),
             near: (client as AnyObject?) ?? currentClient
         )
         selectedIndex = CandidateWindow.shared.globalSelectedIndex
@@ -1273,8 +1308,8 @@ class CKCInputController: IMKInputController {
         clearAssociation(hideWindow: false)
         CandidateWindow.shared.hide()
         NSLog("[CKC] committed %@ (outputMode=%@ assoc=%d)", outputText, StatusConsole.shared.outputMode.rawValue, fromAssociation ? 1 : 0)
-        // Grow recent run: association pick replaces trailing matched seed with the full phrase;
-        // next-char pick appends only; normal commit appends. Then shortest-seed 聯想.
+        // Auto-show 聯想 guesses after every 字 commit, but do NOT arm digit-pick
+        // until 選詞 (×/T) or 選字 (÷/Y). Digits before that start a fresh code.
         if isHanCommit(traditional) {
             let replace: String? = (fromAssociation && !nextCharPick) ? priorSeed : nil
             appendAssociationContext(traditional, replacingSeed: replace)
@@ -1460,6 +1495,8 @@ class CKCInputController: IMKInputController {
             mode: mode,
             focus: focus,
             digitSource: StatusConsole.shared.digitSource,
+            digitPickColumn: digitPickColumnForUI(),
+            phrasePrefixHighlight: associationSeed,
             near: (client as AnyObject?) ?? currentClient
         )
         charCandidates = chars
@@ -1526,6 +1563,7 @@ class CKCInputController: IMKInputController {
             mode: .characters,
             focus: .characters,
             digitSource: StatusConsole.shared.digitSource,
+            digitPickColumn: .characters,
             near: clientObj
         )
         ckcLog(String(format: "showPunct page=%d count=%d frame=%@",
