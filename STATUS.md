@@ -1,3 +1,18 @@
+## Local 0.2.60 (build 62) — StatusConsole light/dark toggle
+
+Ask: real light mode for Mac IME chrome, plus a StatusConsole button that switches dark ↔ light.
+
+- IMK/LSUIElement often ignores system appearance, so 暗/亮 is a persisted user choice (`ckc.imeAppearance`) forced onto `NSApp` and every floating panel.
+- New RaisedChromeButton **暗** ↔ **亮** on the strip (tooltip names Dark/Light). Default dark.
+- StatusConsole, CandidateWindow, and AddPhrasePanel restyle immediately on toggle (materials, borders, row chrome).
+- Association seed prefix stays the approved adaptive gray (`associationSeedColor`); no candidate pick flash.
+
+Verify: click 暗/亮 → strip + candidate popup (and 新增詞語 if open) flip together; relaunch keeps the choice.
+
+Versions: Mac **0.2.60** (62)
+
+---
+
 ## Local 0.2.55 (build 57) — 選詞 gray until ×/T
 
 Ask: association guess list may show after commit, but 選詞×/T must not be blue until the phrase key is pressed.

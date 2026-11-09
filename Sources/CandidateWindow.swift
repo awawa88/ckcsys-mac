@@ -50,7 +50,7 @@ final class CandidateWindow: NSPanel {
     private var digitSource: DigitSource = .numpad
     /// Column whose header (選字÷ / 選詞×) turns blue when digits 1–9 will pick from it.
     private var digitPickColumn: CandidateColumn? = nil
-    /// Association base (committed seed, e.g. 棋) — blue prefix in phrase rows when they share it.
+    /// Association base (committed seed, e.g. 棋) — darker-gray prefix in phrase rows when they share it.
     private var phrasePrefixHighlight: String = ""
     /// Last known caret position - may be suspicious (near corners/edges).
     /// Always re-query on each show() and upgrade from suspicious to good rects.
@@ -134,8 +134,10 @@ final class CandidateWindow: NSPanel {
         animationBehavior = .utilityWindow
         // Ensure mouse events (clicks and cursor rects) work for nonactivating panel
         ignoresMouseEvents = false
+        appearance = IMEAppearance.resolved.nsAppearance
 
         buildUI()
+        applyAppearance()
         orderOut(nil)
     }
 
@@ -149,7 +151,8 @@ final class CandidateWindow: NSPanel {
         
         // EffectView fills container exactly, inheriting the clip
         effectView = NSVisualEffectView(frame: container.bounds)
-        effectView.material = .hudWindow
+        effectView.appearance = IMEAppearance.resolved.nsAppearance
+        effectView.material = IMEAppearance.resolved.isDark ? .hudWindow : .popover
         effectView.blendingMode = .behindWindow
         effectView.state = .active
         effectView.wantsLayer = true
@@ -564,17 +567,19 @@ final class CandidateWindow: NSPanel {
 
     /// Blue header text only when digitPickColumn is set (after ×/T or ÷/Y / compose arm).
     private func applyDigitPickHeaderColors() {
-        let active = NSColor.systemBlue
-        let idle = NSColor.secondaryLabelColor
-        leftTitleLabel?.textColor = (digitPickColumn == .characters) ? active : idle
-        rightTitleLabel?.textColor = (digitPickColumn == .phrases) ? active : idle
-        leftTitleLabel?.needsDisplay = true
-        rightTitleLabel?.needsDisplay = true
+        IMEAppearance.resolved.nsAppearance.performAsCurrentDrawingAppearance {
+            let active = NSColor.systemBlue
+            let idle = NSColor.secondaryLabelColor
+            leftTitleLabel?.textColor = (digitPickColumn == .characters) ? active : idle
+            rightTitleLabel?.textColor = (digitPickColumn == .phrases) ? active : idle
+            leftTitleLabel?.needsDisplay = true
+            rightTitleLabel?.needsDisplay = true
+        }
     }
 
     /// Longest prefix of `seed` that `phrase` starts with (Character-based). Empty if none.
     /// Covers single-字 seeds (棋→棋手) and multi-字 seeds (香港→香港人).
-    private static func bluePrefix(for phrase: String, seed: String) -> String {
+    private static func seedPrefix(for phrase: String, seed: String) -> String {
         guard !seed.isEmpty, !phrase.isEmpty else { return "" }
         if phrase.hasPrefix(seed) { return seed }
         let chars = Array(seed)
@@ -649,7 +654,7 @@ final class CandidateWindow: NSPanel {
                     text: phrase,
                     selected: selected,
                     labelWidth: 16,
-                    highlightPrefix: Self.bluePrefix(for: phrase, seed: phrasePrefixHighlight)
+                    highlightPrefix: Self.seedPrefix(for: phrase, seed: phrasePrefixHighlight)
                 )
             } else {
                 phraseRowViews[i].isHidden = true
@@ -693,10 +698,28 @@ final class CandidateWindow: NSPanel {
         applyDigitPickHeaderColors()
     }
 
+    /// Restyle this panel to the StatusConsole 暗/亮 choice (also used while hidden).
+    func applyChosenAppearance() {
+        applyAppearance()
+        for row in charRowViews + phraseRowViews {
+            row.refreshChrome()
+        }
+        applyDigitPickHeaderColors()
+        pageLabel?.needsDisplay = true
+        hintLabel?.needsDisplay = true
+        leftTitleLabel?.needsDisplay = true
+        rightTitleLabel?.needsDisplay = true
+        contentView?.needsDisplay = true
+        effectView?.needsDisplay = true
+    }
+
     private func applyAppearance() {
-        let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        effectView.appearance = NSApp.effectiveAppearance
-        effectView.material = dark ? .hudWindow : .popover
+        let ns = IMEAppearance.resolved.nsAppearance
+        appearance = ns
+        contentView?.appearance = ns
+        effectView.appearance = ns
+        effectView.material = IMEAppearance.resolved.isDark ? .hudWindow : .popover
+        effectView.state = .active
         // No border — container cornerRadius + masksToBounds clips cleanly (PR #7)
     }
 
@@ -1147,27 +1170,34 @@ private final class CandidateRowView: NSButton {
         applyChrome()
     }
 
-    private func applyChrome() {
-        let weight: NSFont.Weight
-        if isSelected {
-            // Keyboard / focused selection
-            layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
-            numberLabel.textColor = .controlAccentColor
-            weight = .semibold
-        } else if isHovered && !isEmpty {
-            // Mouse hover — distinct from selected so clickability is obvious even if cursor stays arrow
-            layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.12).cgColor
-            numberLabel.textColor = .secondaryLabelColor
-            weight = .medium
-        } else {
-            layer?.backgroundColor = NSColor.clear.cgColor
-            numberLabel.textColor = .secondaryLabelColor
-            weight = .medium
-        }
-        paintText(weight: weight)
+    fileprivate func refreshChrome() {
+        applyChrome()
     }
 
-    /// Association: committed seed (e.g. 棋) in systemBlue; remainder in labelColor.
+    private func applyChrome() {
+        IMEAppearance.resolved.nsAppearance.performAsCurrentDrawingAppearance {
+            let weight: NSFont.Weight
+            if isSelected {
+                // Keyboard / focused selection — no blue flash; static accent wash only.
+                layer?.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(0.22).cgColor
+                numberLabel.textColor = .controlAccentColor
+                weight = .semibold
+            } else if isHovered && !isEmpty {
+                // Mouse hover — distinct from selected so clickability is obvious even if cursor stays arrow
+                layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.12).cgColor
+                numberLabel.textColor = .secondaryLabelColor
+                weight = .medium
+            } else {
+                layer?.backgroundColor = NSColor.clear.cgColor
+                numberLabel.textColor = .secondaryLabelColor
+                weight = .medium
+            }
+            paintText(weight: weight)
+        }
+    }
+
+    /// Association: committed seed (e.g. 棋) in darker gray — already in the document,
+    /// will not be doubled on pick. Remainder stays labelColor.
     private func paintText(weight: NSFont.Weight) {
         let font = NSFont.systemFont(ofSize: 15, weight: weight)
         let base = NSColor.labelColor
@@ -1179,11 +1209,19 @@ private final class CandidateRowView: NSButton {
         if !prefix.isEmpty, displayText.hasPrefix(prefix) {
             let utf16Len = (prefix as NSString).length
             attr.addAttributes(
-                [.foregroundColor: NSColor.systemBlue],
+                [.foregroundColor: Self.associationSeedColor],
                 range: NSRange(location: 0, length: utf16Len)
             )
         }
         textLabel.attributedStringValue = attr
+    }
+
+    /// Darker gray than a faint secondary tint, readable on light popover and dark HUD.
+    private static let associationSeedColor = NSColor(name: "associationSeedGray") { appearance in
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return dark
+            ? NSColor(calibratedWhite: 0.62, alpha: 1)
+            : NSColor(calibratedWhite: 0.32, alpha: 1)
     }
 
     /// Append to /tmp/ckc-ime.log + NSLog; throttle noisy cursor/hover lines.

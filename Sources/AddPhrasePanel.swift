@@ -27,10 +27,20 @@ final class AddPhrasePanel: NSObject, NSTextFieldDelegate {
                 self.setStatus("輸入詞語 → 自動編碼（可改）。規則：1字全碼；2字3+3；3字2+2+2；4字2+1+1+2；5+字2+1+1+1+1。",
                                color: .secondaryLabelColor, code: "")
             }
+            self.applyChosenAppearance()
             self.window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             self.window?.makeFirstResponder(self.phraseField)
         }
+    }
+
+    /// Match StatusConsole 暗/亮. Safe when the window has not been built yet.
+    func applyChosenAppearance() {
+        let ns = IMEAppearance.resolved.nsAppearance
+        window?.appearance = ns
+        window?.contentView?.appearance = ns
+        window?.contentView?.needsDisplay = true
+        window?.invalidateShadow()
     }
 
     private func buildIfNeeded() {
@@ -105,6 +115,7 @@ final class AddPhrasePanel: NSObject, NSTextFieldDelegate {
 
         win.contentView = content
         self.window = win
+        applyChosenAppearance()
     }
 
     func controlTextDidChange(_ obj: Notification) {
