@@ -82,8 +82,49 @@ enum CandidateAnchor: String {
     }
 }
 
+/// IME chrome appearance. Input Method Kit / LSUIElement processes often ignore
+/// system light/dark, so this is user-controlled (StatusConsole 暗/亮) and forced
+/// onto NSApp plus every floating panel.
+enum IMEAppearance: String {
+    case dark
+    case light
+
+    /// Process-wide resolved choice (nested draw must not touch StatusConsole.shared).
+    static var resolved: IMEAppearance = .dark
+    static let defaultsKey = "ckc.imeAppearance"
+
+    var label: String {
+        switch self {
+        case .dark: return "暗"
+        case .light: return "亮"
+        }
+    }
+
+    var toolTip: String {
+        switch self {
+        case .dark: return "深色模式 Dark（點擊切換為淺色 Light）"
+        case .light: return "淺色模式 Light（點擊切換為深色 Dark）"
+        }
+    }
+
+    var isDark: Bool { self == .dark }
+
+    var nsAppearance: NSAppearance {
+        NSAppearance(named: isDark ? .darkAqua : .aqua)!
+    }
+
+    mutating func toggle() {
+        self = (self == .dark) ? .light : .dark
+    }
+
+    static func applyToApp(_ appearance: IMEAppearance) {
+        resolved = appearance
+        NSApp.appearance = appearance.nsAppearance
+    }
+}
+
 /// Compact modern floating status strip (vibrancy HUD).
-/// Shows 縱 on/off · 繁/簡 · digit-source (小鍵盤/鍵盤) · candidate anchor (光/錨).
+/// Shows 縱 on/off · 繁/簡 · digit-source (小鍵盤/鍵盤) · candidate anchor (光/錨) · 暗/亮.
 /// Drag empty chrome / labels to reposition; buttons keep normal clicks.
 final class StatusConsole: NSPanel {
     static let shared = StatusConsole()
@@ -100,6 +141,16 @@ final class StatusConsole: NSPanel {
         didSet { refreshLabels(); UserDefaults.standard.set(candidateAnchor.rawValue, forKey: Self.candidateAnchorKey) }
     }
 
+    /// Forced IME chrome appearance (not system). Default dark — IMK often never reports light.
+    private(set) var imeAppearance: IMEAppearance = .dark {
+        didSet {
+            IMEAppearance.applyToApp(imeAppearance)
+            UserDefaults.standard.set(imeAppearance.rawValue, forKey: Self.appearanceKey)
+            refreshLabels()
+            applyChosenAppearanceToAllChrome()
+        }
+    }
+
     /// Master compose gate. On (default): CKC compose works. Off: keys pass through as a normal keyboard.
     private(set) var ckcEnabled: Bool = true {
         didSet { refreshLabels(); UserDefaults.standard.set(ckcEnabled, forKey: Self.ckcEnabledKey) }
@@ -113,6 +164,7 @@ final class StatusConsole: NSPanel {
     private static let digitSourceKey = "ckc.digitSource"
     private static let outputModeKey = "ckc.outputMode"
     private static let candidateAnchorKey = "ckc.candidateAnchor"
+    private static let appearanceKey = IMEAppearance.defaultsKey
     private static let ckcEnabledKey = "ckc.ckcEnabled"
     private static let originXKey = "ckc.statusConsole.originX"
     private static let originYKey = "ckc.statusConsole.originY"
@@ -133,12 +185,13 @@ final class StatusConsole: NSPanel {
     private var sourceButton: NSButton!
     private var outputModeButton: NSButton!
     private var anchorButton: NSButton!
+    private var appearanceButton: NSButton!
     private var gripView: DragGripView!
     private var resizeGripView: ResizeGripView!
     private let cornerRadius: CGFloat = 12
-    /// Default width when nothing persisted: grip + 縱 on/off · 繁/簡 · 小鍵盤/鍵盤 · 光/錨 + BR resize.
-    private static let defaultStripWidth: CGFloat = 220
-    private static let minStripWidth: CGFloat = 180
+    /// Default width when nothing persisted: grip + 縱 · 繁/簡 · 小鍵盤/鍵盤 · 光/錨 · 暗/亮 + BR resize.
+    private static let defaultStripWidth: CGFloat = 256
+    private static let minStripWidth: CGFloat = 216
     private static let maxStripWidth: CGFloat = 420
     /// Floor/ceiling wide enough for Default and Large menu-bar text without clipping.
     /// Floor tracks chrome around raised buttons (see preferredStripHeight).
@@ -150,6 +203,7 @@ final class StatusConsole: NSPanel {
     private var stripHeight: CGFloat = StatusConsole.preferredStripHeight()
     private var ckcEnabledButton: NSButton!
 
+    private var didBuildUI = false
     private var dragStartMouse: NSPoint?
     private var dragStartOrigin: NSPoint?
     private var resizeStartMouse: NSPoint?
@@ -193,6 +247,13 @@ final class StatusConsole: NSPanel {
             candidateAnchor = saved
         }
 
+        if let raw = UserDefaults.standard.string(forKey: Self.appearanceKey),
+           let saved = IMEAppearance(rawValue: raw) {
+            imeAppearance = saved
+        }
+        IMEAppearance.applyToApp(imeAppearance)
+        appearance = imeAppearance.nsAppearance
+
         // bool(forKey:) is false when missing — only override default (true) when key exists.
         if UserDefaults.standard.object(forKey: Self.ckcEnabledKey) != nil {
             ckcEnabled = UserDefaults.standard.bool(forKey: Self.ckcEnabledKey)
@@ -205,8 +266,20 @@ final class StatusConsole: NSPanel {
         orderOut(nil)
     }
 
+    private static let widthChromeKey = "ckc.statusConsole.widthChrome"
+    /// One-shot: make room for the 暗/亮 chrome button without shrinking user-widened strips.
+    private static let widthChromeToken = "appearance-btn-0.2.60"
+
     private static func loadPersistedWidth() -> CGFloat {
         let defaults = UserDefaults.standard
+        if defaults.string(forKey: widthChromeKey) != widthChromeToken {
+            if defaults.object(forKey: widthKey) != nil {
+                let w = CGFloat(defaults.double(forKey: widthKey))
+                let bumped = min(max(w + 36, minStripWidth), maxStripWidth)
+                defaults.set(Double(bumped), forKey: widthKey)
+            }
+            defaults.set(widthChromeToken, forKey: widthChromeKey)
+        }
         guard defaults.object(forKey: widthKey) != nil else { return defaultStripWidth }
         let w = CGFloat(defaults.double(forKey: widthKey))
         return min(max(w, minStripWidth), maxStripWidth)
@@ -262,9 +335,10 @@ final class StatusConsole: NSPanel {
         
         // EffectView fills container exactly, inheriting the rounded clip
         effectView = NSVisualEffectView(frame: container.bounds)
-        effectView.material = .hudWindow
+        effectView.appearance = imeAppearance.nsAppearance
+        effectView.material = imeAppearance.isDark ? .hudWindow : .popover
         effectView.blendingMode = .behindWindow
-        effectView.state = .followsWindowActiveState
+        effectView.state = .active
         effectView.wantsLayer = true
         // Vibrancy often ignores a parent clip; round-mask the effect view itself too.
         effectView.layer?.cornerRadius = cornerRadius
@@ -286,6 +360,10 @@ final class StatusConsole: NSPanel {
         anchorButton.setContentHuggingPriority(.required, for: .horizontal)
         anchorButton.toolTip = candidateAnchor.toolTip
 
+        appearanceButton = RaisedChromeButton(title: imeAppearance.label, target: self, action: #selector(toggleAppearance(_:)))
+        appearanceButton.setContentHuggingPriority(.required, for: .horizontal)
+        appearanceButton.toolTip = imeAppearance.toolTip
+
         applyChromeFonts()
 
         gripView = DragGripView(frame: .zero)
@@ -298,7 +376,7 @@ final class StatusConsole: NSPanel {
         resizeGripView.translatesAutoresizingMaskIntoConstraints = false
         resizeGripView.toolTip = "拖曳調整狀態列寬度"
 
-        let stack = NSStackView(views: [ckcEnabledButton, outputModeButton, sourceButton, anchorButton])
+        let stack = NSStackView(views: [ckcEnabledButton, outputModeButton, sourceButton, anchorButton, appearanceButton])
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 4
@@ -344,6 +422,7 @@ final class StatusConsole: NSPanel {
         applyAppearance()
         refreshLabels()
         observeMenuBarChromeChanges()
+        didBuildUI = true
     }
 
     /// Re-read NSFont.menuBarFont(ofSize: 0) for every chrome label/button.
@@ -358,6 +437,8 @@ final class StatusConsole: NSPanel {
         sourceButton?.controlSize = control
         anchorButton?.font = Self.menuBarChromeFont(weight: .semibold)
         anchorButton?.controlSize = control
+        appearanceButton?.font = Self.menuBarChromeFont(weight: .semibold)
+        appearanceButton?.controlSize = control
     }
 
     /// Grow strip if current height would clip the live menu-bar glyphs.
@@ -395,7 +476,7 @@ final class StatusConsole: NSPanel {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.ensureStripFitsMenuBarFont()
-            self.applyAppearance()
+            self.applyChosenAppearanceToAllChrome()
         }
     }
 
@@ -424,6 +505,11 @@ final class StatusConsole: NSPanel {
               candidateAnchor.rawValue, candidateAnchor == .console ? 1 : 0)
     }
 
+    @objc private func toggleAppearance(_ sender: Any?) {
+        imeAppearance.toggle()
+        NSLog("[CKC] imeAppearance → %@", imeAppearance.rawValue)
+    }
+
     func toggleDigitSource() {
         digitSource.toggle()
         onDigitSourceChanged?(digitSource)
@@ -440,6 +526,8 @@ final class StatusConsole: NSPanel {
         outputModeButton?.title = outputMode.label
         anchorButton?.title = candidateAnchor.label
         anchorButton?.toolTip = candidateAnchor.toolTip
+        appearanceButton?.title = imeAppearance.label
+        appearanceButton?.toolTip = imeAppearance.toolTip
         applyCkcEnabledChrome()
     }
 
@@ -490,10 +578,27 @@ final class StatusConsole: NSPanel {
         }
     }
 
+    /// Force NSApp + every floating chrome window onto the saved 暗/亮 choice.
+    /// IMK does not reliably follow system appearance; this is the user override.
+    func applyChosenAppearanceToAllChrome() {
+        IMEAppearance.applyToApp(imeAppearance)
+        appearance = imeAppearance.nsAppearance
+        contentView?.appearance = imeAppearance.nsAppearance
+        guard didBuildUI else { return }
+        applyAppearance()
+        CandidateWindow.shared.applyChosenAppearance()
+        AddPhrasePanel.shared.applyChosenAppearance()
+    }
+
     private func applyAppearance() {
-        let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        effectView.appearance = NSApp.effectiveAppearance
+        let dark = imeAppearance.isDark
+        let ns = imeAppearance.nsAppearance
+        appearance = ns
+        contentView?.appearance = ns
+        effectView.appearance = ns
         effectView.material = dark ? .hudWindow : .popover
+        // Keep vibrancy emphasized so light mode is not a washed-out inactive HUD.
+        effectView.state = .active
 
         // No soft outer glow. A white CALayer shadow (even with rounded shadowPath) still
         // blurs into a light rectangular haze around the pill on dark backgrounds — that
@@ -532,6 +637,8 @@ final class StatusConsole: NSPanel {
         outputModeButton?.needsDisplay = true
         sourceButton?.needsDisplay = true
         anchorButton?.needsDisplay = true
+        appearanceButton?.needsDisplay = true
+        applyCkcEnabledChrome()
     }
 
     /// Kept as a no-op refresh hook so resize/show call sites stay valid if a
@@ -751,7 +858,7 @@ final class StatusConsole: NSPanel {
     func showNearScreenBottom() {
         cancelPendingHide()
         ensureStripFitsMenuBarFont()
-        applyAppearance()
+        applyChosenAppearanceToAllChrome()
         placeUsingSavedOrDefault()
         orderFrontRegardless()
     }
@@ -759,7 +866,7 @@ final class StatusConsole: NSPanel {
     func show(near client: AnyObject?) {
         cancelPendingHide()
         ensureStripFitsMenuBarFont()
-        applyAppearance()
+        applyChosenAppearanceToAllChrome()
         // Restore last dragged position (or bottom-center default); ignore caret for the strip.
         placeUsingSavedOrDefault()
         orderFrontRegardless()
@@ -852,8 +959,13 @@ final class StatusConsole: NSPanel {
         }
 
         override func draw(_ dirtyRect: NSRect) {
-            let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            let pressed = isHighlighted
+            IMEAppearance.resolved.nsAppearance.performAsCurrentDrawingAppearance {
+                drawChrome(pressed: isHighlighted)
+            }
+        }
+
+        private func drawChrome(pressed: Bool) {
+            let dark = IMEAppearance.resolved.isDark
             let insetBounds = bounds.insetBy(dx: 0.5, dy: 0.5)
             let path = NSBezierPath(roundedRect: insetBounds, xRadius: cornerRadius, yRadius: cornerRadius)
 
@@ -964,7 +1076,13 @@ final class StatusConsole: NSPanel {
 
         override func draw(_ dirtyRect: NSRect) {
             super.draw(dirtyRect)
-            let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            IMEAppearance.resolved.nsAppearance.performAsCurrentDrawingAppearance {
+                drawGripDots()
+            }
+        }
+
+        private func drawGripDots() {
+            let dark = IMEAppearance.resolved.isDark
             let color = (dark
                 ? NSColor.tertiaryLabelColor.withAlphaComponent(0.85)
                 : NSColor.tertiaryLabelColor.withAlphaComponent(0.70))
@@ -1032,7 +1150,13 @@ final class StatusConsole: NSPanel {
 
         override func draw(_ dirtyRect: NSRect) {
             super.draw(dirtyRect)
-            let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            IMEAppearance.resolved.nsAppearance.performAsCurrentDrawingAppearance {
+                drawHatch()
+            }
+        }
+
+        private func drawHatch() {
+            let dark = IMEAppearance.resolved.isDark
             let color = (dark
                 ? NSColor.tertiaryLabelColor.withAlphaComponent(0.90)
                 : NSColor.tertiaryLabelColor.withAlphaComponent(0.75))

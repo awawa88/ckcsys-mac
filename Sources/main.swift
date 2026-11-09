@@ -13,6 +13,14 @@ struct CKCApp {
         gServer = IMKServer(name: connectionName, bundleIdentifier: bundleID)
         NSLog("[CKC] IMKServer started connection=%@ bundle=%@", connectionName, bundleID)
         DictionaryStore.shared.load()
+        // IMK/LSUIElement often ignores system light/dark — pin NSApp to the saved 暗/亮 choice
+        // before any floating chrome is created.
+        if let raw = UserDefaults.standard.string(forKey: IMEAppearance.defaultsKey),
+           let saved = IMEAppearance(rawValue: raw) {
+            IMEAppearance.applyToApp(saved)
+        } else {
+            IMEAppearance.applyToApp(.dark)
+        }
         app.run()
     }
 }
