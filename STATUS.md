@@ -1,3 +1,16 @@
+## Local 0.2.58 (build 60) — association seed prefix darker gray
+
+Ask: in association / guessing phrase lists, the committed seed prefix (e.g. 棋 in 棋手) must be darker gray, not systemBlue, so it is clearly already in the text and will not be doubled on pick. Remainder stays normal label color.
+
+- CandidateRowView.paintText: association seed uses adaptive darker gray (light 0.32 / dark 0.62 white); rest of the phrase stays labelColor.
+- Digit-pick headers still systemBlue only when armed; idle 選詞 gray until ×/T; no pick flash; digits need 選詞; keypad `.` delete/close unchanged.
+
+Verify: commit 棋 → association 選詞 list shows darker-gray 棋 + normal remainder; 選詞× gray until ×/T.
+
+Versions: Mac **0.2.58** (60)
+
+---
+
 ## Local 0.2.57 (build 59) — remove candidate pick flash
 
 Ask: don’t need the blue selection flash on Mac. Roll it back.

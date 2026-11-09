@@ -50,7 +50,7 @@ final class CandidateWindow: NSPanel {
     private var digitSource: DigitSource = .numpad
     /// Column whose header (選字÷ / 選詞×) turns blue when digits 1–9 will pick from it.
     private var digitPickColumn: CandidateColumn? = nil
-    /// Association base (committed seed, e.g. 棋) — blue prefix in phrase rows when they share it.
+    /// Association base (committed seed, e.g. 棋) — darker-gray prefix in phrase rows when they share it.
     private var phrasePrefixHighlight: String = ""
     /// Last known caret position - may be suspicious (near corners/edges).
     /// Always re-query on each show() and upgrade from suspicious to good rects.
@@ -574,7 +574,7 @@ final class CandidateWindow: NSPanel {
 
     /// Longest prefix of `seed` that `phrase` starts with (Character-based). Empty if none.
     /// Covers single-字 seeds (棋→棋手) and multi-字 seeds (香港→香港人).
-    private static func bluePrefix(for phrase: String, seed: String) -> String {
+    private static func seedPrefix(for phrase: String, seed: String) -> String {
         guard !seed.isEmpty, !phrase.isEmpty else { return "" }
         if phrase.hasPrefix(seed) { return seed }
         let chars = Array(seed)
@@ -649,7 +649,7 @@ final class CandidateWindow: NSPanel {
                     text: phrase,
                     selected: selected,
                     labelWidth: 16,
-                    highlightPrefix: Self.bluePrefix(for: phrase, seed: phrasePrefixHighlight)
+                    highlightPrefix: Self.seedPrefix(for: phrase, seed: phrasePrefixHighlight)
                 )
             } else {
                 phraseRowViews[i].isHidden = true
@@ -1167,7 +1167,8 @@ private final class CandidateRowView: NSButton {
         paintText(weight: weight)
     }
 
-    /// Association: committed seed (e.g. 棋) in systemBlue; remainder in labelColor.
+    /// Association: committed seed (e.g. 棋) in darker gray — already in the document,
+    /// will not be doubled on pick. Remainder stays labelColor.
     private func paintText(weight: NSFont.Weight) {
         let font = NSFont.systemFont(ofSize: 15, weight: weight)
         let base = NSColor.labelColor
@@ -1179,11 +1180,19 @@ private final class CandidateRowView: NSButton {
         if !prefix.isEmpty, displayText.hasPrefix(prefix) {
             let utf16Len = (prefix as NSString).length
             attr.addAttributes(
-                [.foregroundColor: NSColor.systemBlue],
+                [.foregroundColor: Self.associationSeedColor],
                 range: NSRange(location: 0, length: utf16Len)
             )
         }
         textLabel.attributedStringValue = attr
+    }
+
+    /// Darker gray than a faint secondary tint, readable on light popover and dark HUD.
+    private static let associationSeedColor = NSColor(name: "associationSeedGray") { appearance in
+        let dark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return dark
+            ? NSColor(calibratedWhite: 0.62, alpha: 1)
+            : NSColor(calibratedWhite: 0.32, alpha: 1)
     }
 
     /// Append to /tmp/ckc-ime.log + NSLog; throttle noisy cursor/hover lines.
