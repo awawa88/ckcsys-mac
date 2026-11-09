@@ -68,6 +68,12 @@ final class Lex {
         if let s = exact[code], s.contains(where: { $0.count >= 2 }) { return true }
         return false
     }
+    func isListedExactPhrase(_ phrase: String, atCode code: String) -> Bool {
+        guard phrase.count >= 2 else { return false }
+        if let u = userExact[code], u.contains(phrase) { return true }
+        if let s = exact[code], s.contains(phrase) { return true }
+        return false
+    }
     func phrases(_ code: String) -> [String] {
         var out: [String] = []
         var seen = Set<String>()
@@ -121,33 +127,48 @@ func decide(lex: Lex, buffer: String, look: Look, digit: Int, inactive: Bool) ->
         return exactPhrase && chars.isEmpty && !phrases.isEmpty
     }
 
+    func shouldComposeOver(digit: Int, phraseList: [String]) -> Bool {
+        guard buffer.count < 6 else { return false }
+        let extended = buffer + String(digit)
+        if lex.hasUserCode(withPrefix: extended) { return true }
+        guard lex.hasCode(withPrefix: extended) else { return false }
+        if digit == 0 { return true }
+        guard extended.count == 6, digit >= 1, digit <= 9 else { return false }
+        if phraseList.indices.contains(digit - 1) {
+            let pick = phraseList[digit - 1]
+            if lex.isListedExactPhrase(pick, atCode: buffer) { return false }
+        }
+        return true
+    }
+
     if inactive {
         let armed = (look == .phrases || look == .characters) && digit >= 1 && digit <= 9 && hasCandidates
         if !armed { return "PASSTHROUGH_ASCII digit=\(digit)" }
     }
 
+    var look2 = look
+    var phraseCompose = false
     if digit >= 1 && digit <= 9 && hasCandidates {
         if look == .phrases {
-            let pick = phrases.indices.contains(digit - 1) ? phrases[digit - 1] : Optional<String>.none
-            if let p = pick { return "PHRASE_PICK '\(p)' (armed look=phrases)" }
-            return "PHRASE_PICK_MISS"
-        }
-        if look == .characters {
+            if !shouldComposeOver(digit: digit, phraseList: phrases) {
+                let pick = phrases.indices.contains(digit - 1) ? phrases[digit - 1] : Optional<String>.none
+                if let p = pick { return "PHRASE_PICK '\(p)' (armed look=phrases)" }
+                return "PHRASE_PICK_MISS"
+            }
+            look2 = .all
+            phraseCompose = true
+        } else if look == .characters {
             let pick = chars.indices.contains(digit - 1) ? chars[digit - 1] : Optional<String>.none
             if let p = pick { return "CHAR_PICK '\(p)'" }
             return "CHAR_PICK_MISS"
         }
-        if inactive { return "PASSTHROUGH_ASCII digit=\(digit)" }
+        if inactive && !phraseCompose { return "PASSTHROUGH_ASCII digit=\(digit)" }
     }
 
     // .all compose path with auto one-shot
-    var look2 = look
-    if shouldAuto() {
+    if look2 == .all && shouldAuto() {
         let extended = buffer + String(digit)
-        if lex.hasUserCode(withPrefix: extended) {
-            // fall through to append/compose below
-        } else if digit == 0 && lex.hasCode(withPrefix: extended) {
-            // digit 0 never picks; stock/user extend under 0 must compose (20338+0→203380)
+        if shouldComposeOver(digit: digit, phraseList: phrases) {
             // fall through to append/compose below
         } else {
             // enter auto + pick
@@ -236,6 +257,30 @@ check("20338+0 compose 終於 path", decide(lex: lex, buffer: "20338", look: .al
 check("20338 phrases +0 still compose", decide(lex: lex, buffer: "20338", look: .phrases, digit: 0, inactive: false), contains: "203380")
 check("20338+1 still auto-picks (not compose to 203381)", decide(lex: lex, buffer: "20338", look: .all, digit: 1, inactive: false), contains: "AUTO_PHRASE_PICK")
 check("06177+0 stock-extends still compose if key exists", decide(lex: lex, buffer: "06177", look: .all, digit: 0, inactive: false), contains: "061770")
+
+// 366069 class: exact 詞 midpoint (36606) must not swallow the 6th digit
+print("lex exact[36606]=\(lex.exact["36606"] ?? []) hasLonger=\(lex.hasLongerCode("36606")) stock366069=\(lex.hasCode(withPrefix: "366069"))")
+print("lex phrases(366069).first=\(lex.phrases("366069").first ?? "?")")
+check("36606 armed +9 must compose 366069", decide(lex: lex, buffer: "36606", look: .phrases, digit: 9, inactive: false), contains: "366069")
+check("36606 all +9 compose (one-shot)", decide(lex: lex, buffer: "36606", look: .all, digit: 9, inactive: false), contains: "366069")
+var buf366 = ""
+var look366 = Look.all
+for d in [3, 6, 6, 0, 6, 9] {
+    let r = decide(lex: lex, buffer: buf366, look: look366, digit: d, inactive: false)
+    print("366069 TYPE \(d) @'\(buf366)' => \(r)")
+    if r.hasPrefix("COMPOSE '") {
+        if let s = r.split(separator: "'").dropFirst().first { buf366 = String(s) }
+        if r.contains("look=phrases") { look366 = .phrases }
+        else { look366 = .all }
+    } else if r.hasPrefix("PHRASE_PICK") || r.hasPrefix("AUTO_PHRASE_PICK") {
+        failed += 1
+        print("FAIL 366069 path digit \(d) => \(r)")
+    }
+}
+check("366069 full path buffer", "buf=\(buf366)", contains: "366069")
+
+// 203380: stock 6-digit completion via 0
+check("20338+0 still compose", decide(lex: lex, buffer: "20338", look: .all, digit: 0, inactive: false), contains: "203380")
 
 if failed > 0 {
     fputs("FAILED \(failed) checks\n", stderr)

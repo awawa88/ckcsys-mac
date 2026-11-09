@@ -929,19 +929,21 @@ class CKCInputController: IMKInputController {
                     }
                     return true
                 }
-                // Armed 選詞 (T/× or auto): 1–9 ONLY pick — never compose-over-pick.
-                // Stock longer keys under 06177 (061770/061771/061777) must not steal digit 1
-                // away from 自己 once phrase mode is on (manual OR auto). To reach a longer
-                // code, stay in .all (do not press 選詞 / wait for auto) and keep typing.
+                // Armed 選詞 (T/× or auto): 1–9 pick unless this digit completes a 6-digit key
+                // (36606+9→366069). Exact 詞 at the current buffer still win (06177+1→自己).
                 if lookKind == .phrases {
-                    syncCandidateWindow(near: sender)
-                    if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
-                        ckcLog("phrase-mode pick digit=\(digit) → '\(text)' buffer='\(buffer)'")
-                        commit(text, client: sender)
+                    if !shouldComposeOverPhrasePick(digit: digit) {
+                        syncCandidateWindow(near: sender)
+                        if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
+                            ckcLog("phrase-mode pick digit=\(digit) → '\(text)' buffer='\(buffer)'")
+                            commit(text, client: sender)
+                            return true
+                        }
+                        ckcLog("phrase-mode pick digit=\(digit) miss buffer='\(buffer)' phrases=\(phraseCandidates.count)")
                         return true
                     }
-                    ckcLog("phrase-mode pick digit=\(digit) miss buffer='\(buffer)' phrases=\(phraseCandidates.count)")
-                    return true
+                    ckcLog("phrase-mode compose-over-pick digit=\(digit) buffer='\(buffer)'")
+                    lookKind = .all
                 }
                 // Armed 選字 (Y/// or auto): 1–9 ONLY pick characters.
                 if lookKind == .characters {
@@ -1005,11 +1007,8 @@ class CKCInputController: IMKInputController {
                     // Exception: digit 0 never picks (1–9 only). If stock/user has a key under
                     // this 0, keep composing so 20338+0 → 203380 (終於) instead of swallowing
                     // into marked 20338** with no way to reach the longer code.
-                    if DictionaryStore.shared.hasUserCode(withPrefix: extended) {
-                        ckcLog("auto-select skipped; user digit extends '\(extended)' exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0) userLonger=\(DictionaryStore.shared.hasLongerUserCode(for: buffer) ? 1 : 0)")
-                        // fall through to append
-                    } else if digit == 0 && DictionaryStore.shared.hasCode(withPrefix: extended) {
-                        ckcLog("auto-select skipped; digit 0 stock-extends '\(extended)' exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0)")
+                    if shouldComposeOverPhrasePick(digit: digit) {
+                        ckcLog("auto-select skipped; compose-over-pick '\(extended)' exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0) userLonger=\(DictionaryStore.shared.hasLongerUserCode(for: buffer) ? 1 : 0)")
                         // fall through to append
                     } else {
                         ckcLog("auto-phrase-pick buffer=\(buffer) digit=\(digit) exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0) userLonger=\(DictionaryStore.shared.hasLongerUserCode(for: buffer) ? 1 : 0) stockExtends=\(DictionaryStore.shared.hasCode(withPrefix: extended) ? 1 : 0)")
@@ -1106,6 +1105,29 @@ class CKCInputController: IMKInputController {
         return DictionaryStore.shared.hasExactPhrase(for: buffer)
             && charCandidates.isEmpty
             && !phraseCandidates.isEmpty
+    }
+
+    /// While buffer is shorter than the 6-digit max, prefer appending when this digit
+    /// would complete a lexicon key (stock or user). Exception: digit 1–9 still pick an
+    /// exact 詞 at the *current* buffer (06177+1→自己), never a longer-key expansion row.
+    private func shouldComposeOverPhrasePick(digit: Int) -> Bool {
+        guard buffer.count < 6 else { return false }
+        let extended = buffer + String(digit)
+        if DictionaryStore.shared.hasUserCode(withPrefix: extended) {
+            return true
+        }
+        guard DictionaryStore.shared.hasCode(withPrefix: extended) else { return false }
+        if digit == 0 {
+            return true
+        }
+        guard extended.count == 6, digit >= 1, digit <= 9 else { return false }
+        if phraseCandidates.indices.contains(digit - 1) {
+            let pick = phraseCandidates[digit - 1]
+            if DictionaryStore.shared.isListedExactPhrase(pick, atCode: buffer) {
+                return false
+            }
+        }
+        return true
     }
 
     /// Prefer 選詞 when phrases exist; else 選字. Assumes candidates already refreshed (.all).
