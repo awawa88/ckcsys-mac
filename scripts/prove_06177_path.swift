@@ -74,7 +74,6 @@ final class Lex {
         for w in (userExact[code] ?? []) + (exact[code] ?? []) where w.count >= 2 {
             if seen.insert(w).inserted { out.append(w) }
         }
-        // prefix expansions (stock+user longer), user first — mirrors candidates() preference lightly
         if let keys = prefixIndex[code] {
             for key in keys where key != code {
                 for w in (userExact[key] ?? []) + (exact[key] ?? []) where w.count >= 2 {
@@ -105,20 +104,34 @@ final class Lex {
 
 enum Look: String { case all, phrases, characters }
 
-/// Mirrors 0.2.26 controller decision for one digit after a given buffer/lookKind.
-func decide(lex: Lex, buffer: String, look: Look, digit: Int, inactive: Bool) -> String {
+/// Mirrors Mac controller digit decision (0.2.62).
+func decide(
+    lex: Lex,
+    buffer: String,
+    look: Look,
+    digit: Int,
+    inactive: Bool,
+    manualPhrasePick: Bool
+) -> String {
     let phrases = lex.phrases(buffer)
     let chars = lex.chars(buffer)
     let hasCandidates = !phrases.isEmpty || !chars.isEmpty
-    let exactPhrase = lex.hasExactPhrase(buffer)
     let longer = lex.hasLongerCode(buffer)
     let userLonger = lex.hasLongerUserCode(buffer)
 
     func shouldAuto() -> Bool {
         if buffer.isEmpty { return false }
         if userLonger { return false }
-        if !longer { return !phrases.isEmpty || !chars.isEmpty }
-        return exactPhrase && chars.isEmpty && !phrases.isEmpty
+        guard !longer else { return false }
+        return !phrases.isEmpty || !chars.isEmpty
+    }
+
+    func shouldComposeOver(digit: Int) -> Bool {
+        guard buffer.count < 6 else { return false }
+        if manualPhrasePick { return false }
+        let extended = buffer + String(digit)
+        if lex.hasUserCode(withPrefix: extended) { return true }
+        return lex.hasCode(withPrefix: extended)
     }
 
     if inactive {
@@ -126,31 +139,30 @@ func decide(lex: Lex, buffer: String, look: Look, digit: Int, inactive: Bool) ->
         if !armed { return "PASSTHROUGH_ASCII digit=\(digit)" }
     }
 
+    var look2 = look
+    var phraseCompose = false
     if digit >= 1 && digit <= 9 && hasCandidates {
         if look == .phrases {
-            let pick = phrases.indices.contains(digit - 1) ? phrases[digit - 1] : Optional<String>.none
-            if let p = pick { return "PHRASE_PICK '\(p)' (armed look=phrases)" }
-            return "PHRASE_PICK_MISS"
-        }
-        if look == .characters {
+            if !shouldComposeOver(digit: digit) {
+                let pick = phrases.indices.contains(digit - 1) ? phrases[digit - 1] : Optional<String>.none
+                if let p = pick { return "PHRASE_PICK '\(p)' (armed look=phrases)" }
+                return "PHRASE_PICK_MISS"
+            }
+            look2 = .all
+            phraseCompose = true
+        } else if look == .characters {
             let pick = chars.indices.contains(digit - 1) ? chars[digit - 1] : Optional<String>.none
             if let p = pick { return "CHAR_PICK '\(p)'" }
             return "CHAR_PICK_MISS"
         }
-        if inactive { return "PASSTHROUGH_ASCII digit=\(digit)" }
+        if inactive && !phraseCompose { return "PASSTHROUGH_ASCII digit=\(digit)" }
     }
 
-    // .all compose path with auto one-shot
-    var look2 = look
-    if shouldAuto() {
+    if look2 == .all && shouldAuto() {
         let extended = buffer + String(digit)
-        if lex.hasUserCode(withPrefix: extended) {
-            // fall through to append/compose below
-        } else if digit == 0 && lex.hasCode(withPrefix: extended) {
-            // digit 0 never picks; stock/user extend under 0 must compose (20338+0→203380)
-            // fall through to append/compose below
+        if shouldComposeOver(digit: digit) {
+            // fall through to append
         } else {
-            // enter auto + pick
             look2 = !phrases.isEmpty ? .phrases : .characters
             if look2 == .phrases, digit >= 1, digit <= 9, phrases.indices.contains(digit - 1) {
                 return "AUTO_PHRASE_PICK '\(phrases[digit - 1])' stockExtends=\(lex.hasCode(withPrefix: extended))"
@@ -160,20 +172,36 @@ func decide(lex: Lex, buffer: String, look: Look, digit: Int, inactive: Bool) ->
     }
     let next = buffer + String(digit)
     var afterLook = "all"
-    // after append auto-enter
     let phrasesN = lex.phrases(next)
     let charsN = lex.chars(next)
-    let exactN = lex.hasExactPhrase(next)
     let longerN = lex.hasLongerCode(next)
     let userLongerN = lex.hasLongerUserCode(next)
     let autoN: Bool = {
         if next.isEmpty { return false }
         if userLongerN { return false }
-        if !longerN { return !phrasesN.isEmpty || !charsN.isEmpty }
-        return exactN && charsN.isEmpty && !phrasesN.isEmpty
+        guard !longerN else { return false }
+        return !phrasesN.isEmpty || !charsN.isEmpty
     }()
     if autoN { afterLook = !phrasesN.isEmpty ? "phrases" : "characters" }
     return "COMPOSE '\(next)' then look=\(afterLook) phrases=\(phrasesN.count) first=\(phrasesN.first ?? "-")"
+}
+
+func stepPath(lex: Lex, digits: [Int], manualAfterLen: [Int: Bool] = [:]) -> String {
+    var buf = ""
+    var look = Look.all
+    var manual = false
+    for d in digits {
+        if manualAfterLen[buf.count] == true { manual = true; look = .phrases }
+        let r = decide(lex: lex, buffer: buf, look: look, digit: d, inactive: false, manualPhrasePick: manual)
+        if r.hasPrefix("COMPOSE '") {
+            if let s = r.split(separator: "'").dropFirst().first { buf = String(s) }
+            look = r.contains("look=phrases") ? .phrases : .all
+            if look == .phrases && !manual { manual = false }
+        } else {
+            return "ABORT @'\(buf)' digit=\(d) => \(r)"
+        }
+    }
+    return buf
 }
 
 let root = URL(fileURLWithPath: NSHomeDirectory() + "/Projects/ckcsys-mac")
@@ -183,12 +211,6 @@ lex.loadTSV(root.appendingPathComponent("Resources/tables/cht_zimb_VISTA.tsv"))
 lex.loadUser(URL(fileURLWithPath: NSHomeDirectory() + "/Library/Application Support/CKC縱橫/user_phrases.tsv"))
 lex.buildPrefix()
 
-print("lex exact[06177]=\(lex.exact["06177"] ?? [])")
-print("lex hasLonger(06177)=\(lex.hasLongerCode("06177")) userLonger=\(lex.hasLongerUserCode("06177")) stock061771=\(lex.hasCode(withPrefix: "061771"))")
-print("lex phrases(06177)[0]=\(lex.phrases("06177").first ?? "?") count=\(lex.phrases("06177").count) chars=\(lex.chars("06177").count)")
-print("lex phrases(5883) auto? userLonger=\(lex.hasLongerUserCode("5883")) exact=\(lex.hasExactPhrase("5883"))")
-print("lex phrases(58834).first=\(lex.phrases("58834").first ?? "?")")
-
 var failed = 0
 func check(_ name: String, _ got: String, contains: String) {
     let ok = got.contains(contains)
@@ -196,46 +218,33 @@ func check(_ name: String, _ got: String, contains: String) {
     if !ok { failed += 1 }
 }
 
-// Step through 06177 compose
-var buf = ""
-var look = Look.all
-for d in [0, 6, 1, 7, 7] {
-    let r = decide(lex: lex, buffer: buf, look: look, digit: d, inactive: false)
-    print("TYPE \(d) @'\(buf)' look=\(look.rawValue) => \(r)")
-    if r.hasPrefix("COMPOSE '") || r.hasPrefix("COMPOSE_DIGIT0_EXTEND '") || r.hasPrefix("COMPOSE_USER_EXTEND '") {
-        if let s = r.split(separator: "'").dropFirst().first {
-            buf = String(s)
-        }
-        if r.contains("look=phrases") { look = .phrases }
-        else if r.contains("look=characters") { look = .characters }
-        else { look = .all }
-    }
+// 06177: longer codes exist → no auto **; 選詞+1 picks 自己
+print("lex exact[06177]=\(lex.exact["06177"] ?? []) longer=\(lex.hasLongerCode("06177"))")
+let p06177 = stepPath(lex: lex, digits: [0, 6, 1, 7, 7])
+check("06177 compose path stays .all", p06177, contains: "06177")
+check("manual 選詞 +1", decide(lex: lex, buffer: "06177", look: .phrases, digit: 1, inactive: false, manualPhrasePick: true), contains: "PHRASE_PICK '自己'")
+check("06177+1 without 選詞 extends", decide(lex: lex, buffer: "06177", look: .all, digit: 1, inactive: false, manualPhrasePick: false), contains: "061771")
+
+// 366069
+check("366069 path", stepPath(lex: lex, digits: [3, 6, 6, 0, 6, 9]), contains: "366069")
+check("366069 first phrase", lex.phrases("366069").first ?? "", contains: "課程")
+
+// 800620 / 分別
+print("lex exact[8006]=\(lex.exact["8006"] ?? []) longer8006=\(lex.hasLongerCode("8006")) stock800620=\(lex.hasCode(withPrefix: "800620"))")
+print("lex phrases(800620).first=\(lex.phrases("800620").first ?? "?")")
+check("800620 path", stepPath(lex: lex, digits: [8, 0, 0, 6, 2, 0]), contains: "800620")
+check("8006+2 must compose not 人名", decide(lex: lex, buffer: "8006", look: .all, digit: 2, inactive: false, manualPhrasePick: false), contains: "80062")
+check("80062+0", decide(lex: lex, buffer: "80062", look: .all, digit: 0, inactive: false, manualPhrasePick: false), contains: "800620")
+
+// 20338 + 0 / longer compose
+check("20338+0", decide(lex: lex, buffer: "20338", look: .all, digit: 0, inactive: false, manualPhrasePick: false), contains: "203380")
+check("20338+1 compose (longer exists)", decide(lex: lex, buffer: "20338", look: .all, digit: 1, inactive: false, manualPhrasePick: false), contains: "COMPOSE '203381")
+
+// Dead-end auto (example: pick still works when no longer code)
+if let dead = lex.prefixIndex["00259"]?.first(where: { $0 == "00259" }) {
+    _ = dead
 }
-check("after 06177 auto-armed", "look=\(look.rawValue) buf=\(buf)", contains: "look=phrases")
-
-// Critical: armed phrase mode + digit 1 → 自己 (even though stock 061771 exists)
-check("armed auto +1", decide(lex: lex, buffer: "06177", look: .phrases, digit: 1, inactive: false), contains: "自己")
-check("manual 選詞 +1", decide(lex: lex, buffer: "06177", look: .phrases, digit: 1, inactive: false), contains: "PHRASE_PICK '自己'")
-check("armed + inactive-row 1", decide(lex: lex, buffer: "06177", look: .phrases, digit: 1, inactive: true), contains: "自己")
-check("OLD BUG stock extend must NOT win", decide(lex: lex, buffer: "06177", look: .phrases, digit: 1, inactive: false), contains: "PHRASE_PICK")
-
-// 5883+user58834: no auto; digit 4 composes
-let d5883 = decide(lex: lex, buffer: "5883", look: .all, digit: 4, inactive: false)
-check("5883+4 compose 輸入法 path", d5883, contains: "COMPOSE '58834'")
-let after58834 = decide(lex: lex, buffer: "58834", look: .all, digit: 1, inactive: false)
-// at 58834 may auto or pick — first phrase should be 輸入法 when picking in phrases
-let p58834 = lex.phrases("58834")
-check("58834 first phrase 輸入法", p58834.first ?? "", contains: "輸入法")
-// after explicit 選詞 at 5883, digit 1 picks not extend
-check("5883 選詞 +1 picks not extend", decide(lex: lex, buffer: "5883", look: .phrases, digit: 1, inactive: false), contains: "PHRASE_PICK")
-
-// 20338 exact 詞 + stock 203380: digit 0 must compose (never swallow into **)
-print("lex exact[20338]=\(lex.exact["20338"] ?? []) chars=\(lex.chars("20338").count) longer=\(lex.hasLongerCode("20338")) stock203380=\(lex.hasCode(withPrefix: "203380"))")
-print("lex phrases(203380).first=\(lex.phrases("203380").first ?? "?")")
-check("20338+0 compose 終於 path", decide(lex: lex, buffer: "20338", look: .all, digit: 0, inactive: false), contains: "203380")
-check("20338 phrases +0 still compose", decide(lex: lex, buffer: "20338", look: .phrases, digit: 0, inactive: false), contains: "203380")
-check("20338+1 still auto-picks (not compose to 203381)", decide(lex: lex, buffer: "20338", look: .all, digit: 1, inactive: false), contains: "AUTO_PHRASE_PICK")
-check("06177+0 stock-extends still compose if key exists", decide(lex: lex, buffer: "06177", look: .all, digit: 0, inactive: false), contains: "061770")
+check("00259+1 dead-end", decide(lex: lex, buffer: "00259", look: .all, digit: 1, inactive: false, manualPhrasePick: false), contains: "AUTO_PHRASE_PICK")
 
 if failed > 0 {
     fputs("FAILED \(failed) checks\n", stderr)

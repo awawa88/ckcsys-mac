@@ -9,10 +9,10 @@ import Carbon.HIToolbox
 /// (longest seed with lexicon hits, e.g. 香→港 → seed 香港…). Digit picks need 選詞 first
 /// (選詞 also sets marked caret " **" like normal phrase mode).
 /// Association commit inserts only the suffix after the seed (already in the document).
-/// Auto 選詞/選字 (marked **/ *) at a dead-end (!hasLongerCode), OR exact-詞 with no 字
-/// left even if stock longer keys exist (e.g. 06177 → 自己). Only a **user-added** longer
-/// phrase under the buffer (hasLongerUserCode) overrides shorter auto-選詞 — require T/×
-/// (e.g. user 58834 → at 5883 no auto). Stock longer keys alone do not block auto.
+/// Auto 選詞/選字 (marked **/ *) only at a dead-end (!hasLongerCode). Stock/user longer
+/// keys still reachable → digits keep composing (iOS-aligned), e.g. 8006+2→80062→800620.
+/// Explicit 選詞 (T/×) arms digit picks on the current shortlist. User-added longer
+/// under the buffer (hasLongerUserCode) still blocks auto at the prefix (5883).
 /// DigitSource flips only via Caps Lock / StatusConsole (never on digit keys).
 /// Active DigitSource gates compose + candidate pick: numpad mode accepts only numpad digits;
 /// number-row mode accepts only number-row digits. Inactive-row digits never flip mode and
@@ -37,6 +37,8 @@ class CKCInputController: IMKInputController {
     /// Single-字 next-char guesses for 選字 (中國→人); multi-char stay in associationPhrases.
     private var associationNextChars: [String] = []
     private var associationPickEnabled: Bool = false
+    /// True after explicit T/× while composing (not auto dead-end 選詞).
+    private var manualPhrasePickArmed: Bool = false
 
     /// Windows CKC: idle keypad "-" (標點符號鍵) opens 標點 picker; digits then commit.
     private var punctMode: Bool = false
@@ -617,6 +619,7 @@ class CKCInputController: IMKInputController {
 
         if composing && isPhraseEndKey {
             // T / keypad * → 詞 column only
+            manualPhrasePickArmed = true
             lookKind = .phrases
             selectedIndex = 0
             refreshCandidates()
@@ -625,6 +628,7 @@ class CKCInputController: IMKInputController {
         }
         if composing && isCharEnd {
             // Y / keypad / / bare / → 字 column only
+            manualPhrasePickArmed = false
             lookKind = .characters
             selectedIndex = 0
             refreshCandidates()
@@ -929,19 +933,22 @@ class CKCInputController: IMKInputController {
                     }
                     return true
                 }
-                // Armed 選詞 (T/× or auto): 1–9 ONLY pick — never compose-over-pick.
-                // Stock longer keys under 06177 (061770/061771/061777) must not steal digit 1
-                // away from 自己 once phrase mode is on (manual OR auto). To reach a longer
-                // code, stay in .all (do not press 選詞 / wait for auto) and keep typing.
+                // Armed 選詞 (T/× or auto): 1–9 pick unless this digit completes a 6-digit key
+                // (36606+9→366069). Exact 詞 at the current buffer still win (06177+1→自己).
                 if lookKind == .phrases {
-                    syncCandidateWindow(near: sender)
-                    if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
-                        ckcLog("phrase-mode pick digit=\(digit) → '\(text)' buffer='\(buffer)'")
-                        commit(text, client: sender)
+                    if !shouldComposeOverPhrasePick(digit: digit) {
+                        syncCandidateWindow(near: sender)
+                        if let text = CandidateWindow.shared.selectPhraseOnPage(digit) {
+                            ckcLog("phrase-mode pick digit=\(digit) → '\(text)' buffer='\(buffer)'")
+                            commit(text, client: sender)
+                            return true
+                        }
+                        ckcLog("phrase-mode pick digit=\(digit) miss buffer='\(buffer)' phrases=\(phraseCandidates.count)")
                         return true
                     }
-                    ckcLog("phrase-mode pick digit=\(digit) miss buffer='\(buffer)' phrases=\(phraseCandidates.count)")
-                    return true
+                    ckcLog("phrase-mode compose-over-pick digit=\(digit) buffer='\(buffer)'")
+                    manualPhrasePickArmed = false
+                    lookKind = .all
                 }
                 // Armed 選字 (Y/// or auto): 1–9 ONLY pick characters.
                 if lookKind == .characters {
@@ -1005,11 +1012,8 @@ class CKCInputController: IMKInputController {
                     // Exception: digit 0 never picks (1–9 only). If stock/user has a key under
                     // this 0, keep composing so 20338+0 → 203380 (終於) instead of swallowing
                     // into marked 20338** with no way to reach the longer code.
-                    if DictionaryStore.shared.hasUserCode(withPrefix: extended) {
-                        ckcLog("auto-select skipped; user digit extends '\(extended)' exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0) userLonger=\(DictionaryStore.shared.hasLongerUserCode(for: buffer) ? 1 : 0)")
-                        // fall through to append
-                    } else if digit == 0 && DictionaryStore.shared.hasCode(withPrefix: extended) {
-                        ckcLog("auto-select skipped; digit 0 stock-extends '\(extended)' exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0)")
+                    if shouldComposeOverPhrasePick(digit: digit) {
+                        ckcLog("auto-select skipped; compose-over-pick '\(extended)' exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0) userLonger=\(DictionaryStore.shared.hasLongerUserCode(for: buffer) ? 1 : 0)")
                         // fall through to append
                     } else {
                         ckcLog("auto-phrase-pick buffer=\(buffer) digit=\(digit) exactPhrase=\(DictionaryStore.shared.hasExactPhrase(for: buffer) ? 1 : 0) longer=\(DictionaryStore.shared.hasLongerCode(for: buffer) ? 1 : 0) userLonger=\(DictionaryStore.shared.hasLongerUserCode(for: buffer) ? 1 : 0) stockExtends=\(DictionaryStore.shared.hasCode(withPrefix: extended) ? 1 : 0)")
@@ -1087,29 +1091,31 @@ class CKCInputController: IMKInputController {
 
 
     /// Whether the current buffer should lock into 選詞/選字 without T/Y.
-    /// - Dead-end (!hasLongerCode): any candidates → auto.
-    /// - Exact 詞 with zero 字 left (e.g. 06177 → 自己) even if stock longer keys
-    ///   like 061771 exist — once armed, digits 1–9 ONLY pick (no compose-over-pick).
-    /// - User-added longer phrase under the buffer (hasLongerUserCode) overrides:
-    ///   at 5883 with user 58834→輸入法, no auto shortlist; need T/× for 中等/責令.
+    /// Dead-end only: longer stock/user keys still reachable → keep composing (match iOS).
     private func shouldAutoSelectMode() -> Bool {
         guard !buffer.isEmpty, !buffer.contains("?") else { return false }
-        // User longer phrase under this prefix → keep composing; shorter exact 詞 need T/×.
         if DictionaryStore.shared.hasLongerUserCode(for: buffer) {
             return false
         }
-        // Dead-end: no longer keys at all → auto if any candidates.
-        if !DictionaryStore.shared.hasLongerCode(for: buffer) {
-            return !phraseCandidates.isEmpty || !charCandidates.isEmpty
+        guard !DictionaryStore.shared.hasLongerCode(for: buffer) else { return false }
+        return !phraseCandidates.isEmpty || !charCandidates.isEmpty
+    }
+
+    /// While buffer is below max length, append when this digit extends a lexicon key unless
+    /// the user explicitly armed 選詞 (T/×) — then digits pick the shortlist (06177+選詞+1→自己).
+    private func shouldComposeOverPhrasePick(digit: Int) -> Bool {
+        guard buffer.count < 6 else { return false }
+        if manualPhrasePickArmed { return false }
+        let extended = buffer + String(digit)
+        if DictionaryStore.shared.hasUserCode(withPrefix: extended) {
+            return true
         }
-        // Stock longer keys only: restore exact-詞 auto (06177 → 自己).
-        return DictionaryStore.shared.hasExactPhrase(for: buffer)
-            && charCandidates.isEmpty
-            && !phraseCandidates.isEmpty
+        return DictionaryStore.shared.hasCode(withPrefix: extended)
     }
 
     /// Prefer 選詞 when phrases exist; else 選字. Assumes candidates already refreshed (.all).
     private func enterAutoSelectMode() {
+        manualPhrasePickArmed = false
         if !phraseCandidates.isEmpty {
             lookKind = .phrases
         } else if !charCandidates.isEmpty {
@@ -1301,6 +1307,7 @@ class CKCInputController: IMKInputController {
         charCandidates = []
         phraseCandidates = []
         lookKind = .all
+        manualPhrasePickArmed = false
         selectedIndex = 0
         // Lexicon association uses Traditional form (same as candidate lists).
         let traditional = text
@@ -1398,6 +1405,7 @@ class CKCInputController: IMKInputController {
         charCandidates = []
         phraseCandidates = []
         lookKind = .all
+        manualPhrasePickArmed = false
         selectedIndex = 0
         associationContext = ""
         clearAssociation()

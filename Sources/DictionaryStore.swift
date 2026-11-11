@@ -708,6 +708,14 @@ final class DictionaryStore {
         return false
     }
 
+    /// True when `phrase` is a 詞 stored exactly at `code` (not a longer-key prefix hit in the UI list).
+    func isListedExactPhrase(_ phrase: String, atCode code: String) -> Bool {
+        guard phrase.count >= 2 else { return false }
+        if let userHits = userExact[code], userHits.contains(phrase) { return true }
+        if let sysHits = exact[code], sysHits.contains(phrase) { return true }
+        return false
+    }
+
     /// Proper shorter prefixes of `code` that already have an exact 詞 (≥2 chars) in user or system.
     /// Save-time awareness only — shorter 詞 are normal CKC; typing still composes past them
     /// when `hasCode(withPrefix:)` says the longer code exists (see 0.2.22).
