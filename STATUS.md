@@ -1,3 +1,15 @@
+## Local 0.2.64 (build 66) — shared lexicon: 唔使
+
+Ask: add 唔使 616052 (new code, appended; pd 50000).
+
+- Prior batch (0.2.63): 而家 120303, 試一吓 33161, 試吓 336613, 邊到 363121, 超好 478404, 大灣區 483271, 唔值得 610406, 點解 613070, 嗰度 66304, 除咗 782641.
+- Already present: (none). Same phrase under other codes: (none).
+- Prove: `python3 scripts/prove_cantonese_phrases.py`
+
+Versions: Mac **0.2.64** (66)
+
+---
+
 ## Local 0.2.60 (build 62) — StatusConsole light/dark toggle
 
 Ask: real light mode for Mac IME chrome, plus a StatusConsole button that switches dark ↔ light.
