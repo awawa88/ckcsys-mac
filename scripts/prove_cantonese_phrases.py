@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify bundled lexicon: 10 Cantonese customs rank first under their codes."""
+"""Verify bundled lexicon: Cantonese customs rank first under their codes."""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -20,6 +20,7 @@ EXPECTED = {
     "613070": "點解",
     "66304": "嗰度",
     "782641": "除咗",
+    "616052": "唄使",
 }
 
 

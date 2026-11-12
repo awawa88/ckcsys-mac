@@ -1,12 +1,12 @@
-## Local 0.2.63 (build 65) — shared lexicon: Cantonese phrase customs
+## Local 0.2.64 (build 66) — shared lexicon: 唄使
 
-Ask: add 10 Cantonese customs to bundled `cht_cimb_VISTA.tsv` (match iOS ded043c ranking).
+Ask: add 唄使 616052 (new code, appended; pd 50000).
 
-- Added (pd 50000, first under code): 而家 120303, 試一吓 33161, 試吓 336613, 邊到 363121, 超好 478404, 大灣區 483271, 唔值得 610406, 點解 613070, 嗰度 66304, 除咗 782641.
+- Prior batch (0.2.63): 而家 120303, 試一吓 33161, 試吓 336613, 邊到 363121, 超好 478404, 大灣區 483271, 唔值得 610406, 點解 613070, 嗰度 66304, 除咗 782641.
 - Already present: (none). Same phrase under other codes: (none).
 - Prove: `python3 scripts/prove_cantonese_phrases.py`
 
-Versions: Mac **0.2.63** (65)
+Versions: Mac **0.2.64** (66)
 
 ---
 
