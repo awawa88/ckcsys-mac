@@ -499,8 +499,8 @@ final class StatusConsole: NSPanel {
     private func updateSourceButtonIcon() {
         let image: NSImage?
         if digitSource == .numpad {
-            // Use programmatic numpad dot-grid icon (telephone keypad layout)
-            image = Self.createNumpadIcon()
+            // Use Flaticon numpad/call icon (telephone keypad dot grid)
+            image = NSImage(named: "numpad-icon")
         } else {
             // Use programmatic keyboard icon (full keyboard with frame)
             image = Self.createKeyboardIcon()
@@ -631,81 +631,6 @@ final class StatusConsole: NSPanel {
         return image
     }
     
-    /// Create numpad dot-grid icon programmatically matching Andrew's supplied design.
-    /// Ten solid circles in telephone keypad layout: 3×3 grid + 1 centered dot. Template-tintable.
-    /// Enlarged for visibility with corrected geometry - all 10 dots fit within bounds.
-    private static func createNumpadIcon() -> NSImage? {
-        // Check if already cached
-        if let cached = NSImage(named: "numpad-icon-programmatic") {
-            return cached
-        }
-        
-        // Canvas sized to fit enlarged dots with proper margins (no overflow/clipping)
-        let size = CGSize(width: 16, height: 21)
-        let image = NSImage(size: size)
-        image.lockFocus()
-        
-        guard let context = NSGraphicsContext.current?.cgContext else {
-            image.unlockFocus()
-            return nil
-        }
-        
-        // Transparent background
-        context.setFillColor(NSColor.clear.cgColor)
-        context.fill(CGRect(origin: .zero, size: size))
-        
-        // Draw solid black circles - template will tint to white in dark mode
-        context.setFillColor(NSColor.black.cgColor)
-        
-        // Dot specifications - enlarged but properly bounded
-        // radius 2.0 (up from 1.8), spacing 1.0 (inter-dot gap, not center-step)
-        let dotRadius: CGFloat = 2.0
-        let dotSpacing: CGFloat = 1.0
-        
-        // Grid dimensions: (diameter × count) + (spacing × gaps)
-        let gridWidth = dotRadius * 2 * 3 + dotSpacing * 2   // 12 + 2 = 14
-        let gridHeight = dotRadius * 2 * 4 + dotSpacing * 3  // 16 + 3 = 19
-        
-        // Center grid with ~1pt margins (14 in 16, 19 in 21)
-        let marginX = (size.width - gridWidth) / 2
-        let marginY = (size.height - gridHeight) / 2
-        
-        // Starting position for top-left dot center
-        let startX = marginX + dotRadius
-        let startY = marginY + dotRadius
-        
-        // Draw 3×3 grid (9 dots)
-        for row in 0..<3 {
-            for col in 0..<3 {
-                let centerX = startX + CGFloat(col) * (dotRadius * 2 + dotSpacing)
-                let centerY = startY + CGFloat(row) * (dotRadius * 2 + dotSpacing)
-                let dotRect = CGRect(
-                    x: centerX - dotRadius,
-                    y: centerY - dotRadius,
-                    width: dotRadius * 2,
-                    height: dotRadius * 2
-                )
-                context.fillEllipse(in: dotRect)
-            }
-        }
-        
-        // Draw centered bottom dot (10th dot, 4th row)
-        let bottomDotX = startX + (dotRadius * 2 + dotSpacing)  // Center column
-        let bottomDotY = startY + 3 * (dotRadius * 2 + dotSpacing)
-        let bottomDotRect = CGRect(
-            x: bottomDotX - dotRadius,
-            y: bottomDotY - dotRadius,
-            width: dotRadius * 2,
-            height: dotRadius * 2
-        )
-        context.fillEllipse(in: bottomDotRect)
-        
-        image.unlockFocus()
-        image.isTemplate = true
-        image.setName("numpad-icon-programmatic")
-        return image
-    }
-
     @objc private func toggleOutputMode(_ sender: Any?) {
         outputMode.toggle()
         onOutputModeChanged?(outputMode)

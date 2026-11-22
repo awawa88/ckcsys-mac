@@ -80,8 +80,8 @@ if [[ -f "$ROOT/Resources/menuIcon.icns" ]]; then
   cp "$ROOT/Resources/menuIcon.icns" "$RES/menuIcon.icns"
 fi
 
-# StatusConsole button icons (Flaticon assets for anchor/contrast; keyboard/numpad are programmatic)
-for icon in anchor-icon.png contrast-icon.png; do
+# StatusConsole button icons (Flaticon assets; keyboard is programmatic)
+for icon in numpad-icon.png anchor-icon.png contrast-icon.png; do
   if [[ -f "$ROOT/Resources/$icon" ]]; then
     cp "$ROOT/Resources/$icon" "$RES/$icon"
   fi

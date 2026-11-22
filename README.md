@@ -121,8 +121,9 @@ build/     Ckcsys.app (gitignored)
 ## Icon Credits
 
 StatusConsole button icons from [Flaticon](https://www.flaticon.com/):
+- **Numpad icon:** [call_13132476](https://www.flaticon.com/free-icon/call_13132476)
 - **Anchor icon:** [anchor_17153611](https://www.flaticon.com/free-icon/anchor_17153611) by [ifans28](https://www.flaticon.com/authors/ifans28)
 - **Contrast icon:** [contrast_18382019](https://www.flaticon.com/free-icon/contrast_18382019) by [meaicon](https://www.flaticon.com/authors/meaicon)
 
-Keyboard and numpad icons are programmatically drawn vectors based on Andrew's supplied designs.
+Keyboard icon is a programmatically drawn vector based on Andrew's supplied design.
 
