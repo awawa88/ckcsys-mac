@@ -1311,19 +1311,20 @@ private final class CloseButton: NSButton {
     private func setupGlassEffect() {
         guard let baseLayer = layer else { return }
         
-        // Glossy highlight gradient on top half of circle
+        // Enhanced glossy highlight gradient - richer translucent appearance
         let gradient = CAGradientLayer()
         gradient.type = .axial
         gradient.frame = CGRect(x: 0, y: 0, width: 14, height: 14)
         gradient.cornerRadius = 7
         gradient.masksToBounds = true
         
-        // Subtle white highlight at top fading to transparent
-        let highlightTop = NSColor.white.withAlphaComponent(0.35).cgColor
-        let highlightMid = NSColor.white.withAlphaComponent(0.12).cgColor
+        // Stronger specular highlight at top with richer gradient
+        let highlightTop = NSColor.white.withAlphaComponent(0.60).cgColor      // Brighter specular
+        let highlightUpper = NSColor.white.withAlphaComponent(0.32).cgColor   // Upper blend
+        let highlightMid = NSColor.white.withAlphaComponent(0.10).cgColor     // Mid fade
         let transparent = NSColor.clear.cgColor
-        gradient.colors = [highlightTop, highlightMid, transparent]
-        gradient.locations = [0.0, 0.4, 0.65]
+        gradient.colors = [highlightTop, highlightUpper, highlightMid, transparent]
+        gradient.locations = [0.0, 0.25, 0.55, 0.80]
         gradient.startPoint = CGPoint(x: 0.5, y: 0.0)  // Top center
         gradient.endPoint = CGPoint(x: 0.5, y: 1.0)    // Bottom center
         
@@ -1332,6 +1333,24 @@ private final class CloseButton: NSButton {
         
         baseLayer.addSublayer(gradient)
         glassGradientLayer = gradient
+        
+        // Subtle rim shadow for depth - darker edge at bottom
+        let rimLayer = CAGradientLayer()
+        rimLayer.type = .axial
+        rimLayer.frame = CGRect(x: 0, y: 0, width: 14, height: 14)
+        rimLayer.cornerRadius = 7
+        rimLayer.masksToBounds = true
+        
+        // Subtle dark rim at bottom for depth/shading
+        let rimTransparent = NSColor.clear.cgColor
+        let rimShade = NSColor.black.withAlphaComponent(0.18).cgColor
+        rimLayer.colors = [rimTransparent, rimShade]
+        rimLayer.locations = [0.70, 1.0]
+        rimLayer.startPoint = CGPoint(x: 0.5, y: 0.0)
+        rimLayer.endPoint = CGPoint(x: 0.5, y: 1.0)
+        rimLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
+        
+        baseLayer.addSublayer(rimLayer)
     }
     
     required init?(coder: NSCoder) { fatalError("init(coder:)") }
