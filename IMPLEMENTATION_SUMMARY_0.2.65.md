@@ -7,7 +7,7 @@
 
 ## Overview
 
-Added a small, discoverable × close button to the floating candidate/selection card that allows users to dismiss it with a mouse click without inserting any candidate text, as requested.
+Added a macOS window control-style close button (red circular with white ×) in the **upper-right corner** of the floating candidate/selection card that allows users to dismiss it with a mouse click without inserting any candidate text, matching the standard macOS app close button design.
 
 ---
 
@@ -17,19 +17,21 @@ Added a small, discoverable × close button to the floating candidate/selection 
 
 #### New Class: `CloseButton` (CandidateWindow.swift, lines 1278-1368)
 - **Custom NSButton subclass** with hover tracking and cursor management
-- **Size:** 20×20 points
-- **Symbol:** × (multiplication sign, 18pt, light weight)
+- **Style:** macOS window control (red circular close button)
+- **Size:** 14×14 points (perfect circle with 7pt corner radius)
+- **Symbol:** × (multiplication sign, 12pt, medium weight)
 - **Colors:**
-  - **Idle:** Secondary label color (gray)
-  - **Hover:** Label color with 12% alpha gray background
+  - **Background:** Red #FF5F57 (macOS close button red)
+  - **Hover background:** Darker red #F25249
+  - **Symbol:** White (both idle and hover)
 - **Features:**
-  - Rounded corners (4pt radius)
+  - Circular shape matching macOS window controls
   - `NSTrackingArea` for hover detection (`.activeAlways`)
   - Pointing hand cursor on hover (push/pop pattern)
-  - Respects `IMEAppearance` for light/dark mode
+  - Static color constants for consistency across themes
 
 #### Integration Points
-- **Header placement:** Added to left side of header stack (before page label)
+- **Header placement:** Added to **right side** of header stack (after page label) per macOS convention
 - **Callback:** `onCloseButtonClicked` closure property on `CandidateWindow`
 - **Action handler:** `@objc handleCloseButtonClick()` method
 
@@ -74,8 +76,9 @@ CandidateWindow.shared.onCloseButtonClicked = { [weak self] in
 
 ### 4. Visual Polish
 
-- **Light/dark mode:** Adapts via `IMEAppearance.resolved`
-- **Hover effect:** 12% alpha gray background (same as row hover)
+- **macOS window control style:** Red circular button matching system close buttons
+- **Consistent across themes:** Same red (#FF5F57) in both light and dark modes
+- **Hover effect:** Darker red (#F25249) on hover
 - **Selected state:** N/A (button, not selectable item)
 - **Appearance refresh:** `refreshChrome()` method called on theme changes
 
@@ -137,16 +140,17 @@ After installation, restart affected apps or log out/in to reload the input meth
 #### Test Cases:
 1. ✅ Enable Ckcsys IME
 2. ✅ Start digit composition (e.g., type `289449`)
-3. ✅ Verify × button appears in top-left of candidate window
-4. ✅ Hover over × to see gray background and hand cursor
-5. ✅ Click × to verify composition dismisses without inserting text
-6. ✅ Verify normal keyboard selection (Space/digits) still works
-7. ✅ Test punctuation mode: keypad `-` → 標點 opens → × dismisses
-8. ✅ Test association mode: commit 給 → guesses show → × dismisses
-9. ✅ Test in both light and dark appearance modes
-10. ✅ Verify button scales/positions correctly on window resize
-11. ✅ Verify existing IME behavior (composition, navigation, picks) unchanged
-12. ✅ Verify 616052 唔使 phrase still works correctly
+3. ✅ Verify **red circular × button** appears in **upper-right** of candidate window
+4. ✅ Hover over button to see **darker red** background and hand cursor
+5. ✅ Verify button matches **macOS window control style** (circular, red)
+6. ✅ Click button to verify composition dismisses without inserting text
+7. ✅ Verify normal keyboard selection (Space/digits) still works
+8. ✅ Test punctuation mode: keypad `-` → 標點 opens → red × dismisses
+9. ✅ Test association mode: commit 給 → guesses show → red × dismisses
+10. ✅ Test in both light and dark appearance modes (same red in both)
+11. ✅ Verify button scales/positions correctly on window resize
+12. ✅ Verify existing IME behavior (composition, navigation, picks) unchanged
+13. ✅ Verify 616052 唔使 phrase still works correctly
 
 ---
 
@@ -154,11 +158,13 @@ After installation, restart affected apps or log out/in to reload the input meth
 
 ### Design Decisions
 
-1. **CloseButton as separate class:** Encapsulates hover logic, matches `CandidateRowView` pattern
-2. **Callback pattern:** Avoids tight coupling, allows controller to handle different dismiss modes
-3. **Left-side placement:** Conventional (Windows/macOS close buttons), doesn't interfere with page label
-4. **Small size (20×20):** Unobtrusive, discoverable on hover, matches header scale
-5. **No auto-dismiss:** Only manual click; prevents accidental dismissals during typing
+1. **macOS window control style:** Per Andrew's specification - red circular button matching macOS app close buttons
+2. **Upper-right placement:** Specified by Andrew, matches macOS window control convention
+3. **CloseButton as separate class:** Encapsulates hover logic, matches `CandidateRowView` pattern
+4. **Callback pattern:** Avoids tight coupling, allows controller to handle different dismiss modes
+5. **Small size (14×14):** Subtle, unobtrusive, matches macOS window control scale
+6. **Static red color:** Consistent #FF5F57 across light/dark modes (matches system close button)
+7. **No auto-dismiss:** Only manual click; prevents accidental dismissals during typing
 
 ### Edge Cases Handled
 
@@ -192,11 +198,13 @@ After installation, restart affected apps or log out/in to reload the input meth
 
 ## References
 
-- **User Request:** "please add a cross to the mac build on the selection card. so people can close it with a mouse."
+- **Initial Request:** "please add a cross to the mac build on the selection card. so people can close it with a mouse."
+- **Design Clarification:** "make the close button at the upper right of the selection card with a red circle, just like the app close button on a mac"
 - **Starting Version:** 0.2.64 (66), commit 6ae8c53
 - **Starting Branch:** `cursor/cantonese-phrases-mac-ab98` / PR #10
 - **Implementation Branch:** `cursor/close-button-27ed`
 - **Pull Request:** https://github.com/awawa88/ckcsys-mac/pull/11
+- **Final Commit:** 50fc9fe
 
 ---
 
