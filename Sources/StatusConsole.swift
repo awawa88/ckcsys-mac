@@ -499,13 +499,8 @@ final class StatusConsole: NSPanel {
     private func updateSourceButtonIcon() {
         let image: NSImage?
         if digitSource == .numpad {
-            // Use Flaticon numpad/call icon (telephone keypad dot grid)
-            // Flip vertically to correct orientation in manual render context
-            if let original = NSImage(named: "numpad-icon") {
-                image = Self.flipImageVertically(original)
-            } else {
-                image = nil
-            }
+            // Use Flaticon numpad/call icon (pre-flipped for correct orientation)
+            image = NSImage(named: "numpad-icon")
         } else {
             // Use programmatic keyboard icon (full keyboard with frame)
             image = Self.createKeyboardIcon()
@@ -515,30 +510,6 @@ final class StatusConsole: NSPanel {
             resized.isTemplate = true
             sourceButton.image = resized
         }
-    }
-    
-    /// Flip image vertically to correct orientation in manual render context.
-    /// Used specifically for numpad icon which renders upside down.
-    private static func flipImageVertically(_ image: NSImage) -> NSImage {
-        let flipped = NSImage(size: image.size)
-        flipped.lockFocus()
-        
-        // Apply vertical flip transform
-        let transform = NSAffineTransform()
-        transform.translateX(by: 0, yBy: image.size.height)
-        transform.scaleX(by: 1.0, yBy: -1.0)
-        transform.concat()
-        
-        // Draw original image with flip applied
-        image.draw(
-            at: .zero,
-            from: NSRect(origin: .zero, size: image.size),
-            operation: .copy,
-            fraction: 1.0
-        )
-        
-        flipped.unlockFocus()
-        return flipped
     }
     
     /// Resize icon to fit StatusConsole button dimensions with comfortable padding.
