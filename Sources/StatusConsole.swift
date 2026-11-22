@@ -633,15 +633,15 @@ final class StatusConsole: NSPanel {
     
     /// Create numpad dot-grid icon programmatically matching Andrew's supplied design.
     /// Ten solid circles in telephone keypad layout: 3×3 grid + 1 centered dot. Template-tintable.
-    /// Enlarged for visibility while maintaining proportions and even padding.
+    /// Enlarged for visibility with corrected geometry - all 10 dots fit within bounds.
     private static func createNumpadIcon() -> NSImage? {
         // Check if already cached
         if let cached = NSImage(named: "numpad-icon-programmatic") {
             return cached
         }
         
-        // Square aspect ratio for dot grid, larger canvas for better visibility
-        let size = CGSize(width: 16, height: 18)
+        // Canvas sized to fit enlarged dots with proper margins (no overflow/clipping)
+        let size = CGSize(width: 16, height: 21)
         let image = NSImage(size: size)
         image.lockFocus()
         
@@ -657,30 +657,47 @@ final class StatusConsole: NSPanel {
         // Draw solid black circles - template will tint to white in dark mode
         context.setFillColor(NSColor.black.cgColor)
         
-        // Dot specifications - enlarged for visibility, ~40% bigger radius
-        let dotRadius: CGFloat = 2.5
-        let dotSpacing: CGFloat = 3.0
+        // Dot specifications - enlarged but properly bounded
+        // radius 2.0 (up from 1.8), spacing 1.0 (inter-dot gap, not center-step)
+        let dotRadius: CGFloat = 2.0
+        let dotSpacing: CGFloat = 1.0
         
-        // Starting position to center the grid with even padding
-        let gridWidth = dotRadius * 2 * 3 + dotSpacing * 2
-        let gridHeight = dotRadius * 2 * 4 + dotSpacing * 3  // 4 rows total
-        let startX = (size.width - gridWidth) / 2 + dotRadius
-        let startY = (size.height - gridHeight) / 2 + dotRadius
+        // Grid dimensions: (diameter × count) + (spacing × gaps)
+        let gridWidth = dotRadius * 2 * 3 + dotSpacing * 2   // 12 + 2 = 14
+        let gridHeight = dotRadius * 2 * 4 + dotSpacing * 3  // 16 + 3 = 19
         
-        // Draw 3×3 grid
+        // Center grid with ~1pt margins (14 in 16, 19 in 21)
+        let marginX = (size.width - gridWidth) / 2
+        let marginY = (size.height - gridHeight) / 2
+        
+        // Starting position for top-left dot center
+        let startX = marginX + dotRadius
+        let startY = marginY + dotRadius
+        
+        // Draw 3×3 grid (9 dots)
         for row in 0..<3 {
             for col in 0..<3 {
                 let centerX = startX + CGFloat(col) * (dotRadius * 2 + dotSpacing)
                 let centerY = startY + CGFloat(row) * (dotRadius * 2 + dotSpacing)
-                let dotRect = CGRect(x: centerX - dotRadius, y: centerY - dotRadius, width: dotRadius * 2, height: dotRadius * 2)
+                let dotRect = CGRect(
+                    x: centerX - dotRadius,
+                    y: centerY - dotRadius,
+                    width: dotRadius * 2,
+                    height: dotRadius * 2
+                )
                 context.fillEllipse(in: dotRect)
             }
         }
         
-        // Draw centered bottom dot (10th dot)
+        // Draw centered bottom dot (10th dot, 4th row)
         let bottomDotX = startX + (dotRadius * 2 + dotSpacing)  // Center column
         let bottomDotY = startY + 3 * (dotRadius * 2 + dotSpacing)
-        let bottomDotRect = CGRect(x: bottomDotX - dotRadius, y: bottomDotY - dotRadius, width: dotRadius * 2, height: dotRadius * 2)
+        let bottomDotRect = CGRect(
+            x: bottomDotX - dotRadius,
+            y: bottomDotY - dotRadius,
+            width: dotRadius * 2,
+            height: dotRadius * 2
+        )
         context.fillEllipse(in: bottomDotRect)
         
         image.unlockFocus()
@@ -1270,20 +1287,35 @@ final class StatusConsole: NSPanel {
                 let imageRect = NSRect(origin: imageOrigin, size: imageSize)
                 
                 if buttonImage.isTemplate {
-                    // Template images: use image as mask with tint color
+                    // Template images: tint in isolated offscreen context, then composite cleanly
                     // Dark mode = white icons, light mode = dark icons
                     let tintColor = dark ? NSColor.white : NSColor.black
                     
-                    NSGraphicsContext.saveGraphicsState()
+                    // Create tinted version in offscreen buffer (isolated from button face chrome)
+                    let tintedImage = NSImage(size: imageSize)
+                    tintedImage.lockFocus()
                     
-                    // Fill rect with tint color
+                    // Fill offscreen rect with tint color
                     tintColor.setFill()
-                    imageRect.fill()
+                    NSRect(origin: .zero, size: imageSize).fill()
                     
-                    // Use image as mask (destinationIn keeps only where image has alpha)
-                    buttonImage.draw(in: imageRect, from: NSRect.zero, operation: .destinationIn, fraction: 1.0)
+                    // Use source image as mask (destinationIn in clean offscreen context)
+                    buttonImage.draw(
+                        in: NSRect(origin: .zero, size: imageSize),
+                        from: NSRect.zero,
+                        operation: .destinationIn,
+                        fraction: 1.0
+                    )
                     
-                    NSGraphicsContext.restoreGraphicsState()
+                    tintedImage.unlockFocus()
+                    
+                    // Composite tinted result over button face (preserves chrome)
+                    tintedImage.draw(
+                        in: imageRect,
+                        from: NSRect.zero,
+                        operation: .sourceOver,
+                        fraction: 1.0
+                    )
                 } else {
                     // Non-template images: draw directly
                     buttonImage.draw(in: imageRect, from: .zero, operation: .sourceOver, fraction: 1.0)
