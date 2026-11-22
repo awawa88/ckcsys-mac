@@ -633,14 +633,15 @@ final class StatusConsole: NSPanel {
     
     /// Create numpad dot-grid icon programmatically matching Andrew's supplied design.
     /// Ten solid circles in telephone keypad layout: 3×3 grid + 1 centered dot. Template-tintable.
+    /// Enlarged for visibility while maintaining proportions and even padding.
     private static func createNumpadIcon() -> NSImage? {
         // Check if already cached
         if let cached = NSImage(named: "numpad-icon-programmatic") {
             return cached
         }
         
-        // Square aspect ratio for dot grid
-        let size = CGSize(width: 14, height: 16)
+        // Square aspect ratio for dot grid, larger canvas for better visibility
+        let size = CGSize(width: 16, height: 18)
         let image = NSImage(size: size)
         image.lockFocus()
         
@@ -653,14 +654,14 @@ final class StatusConsole: NSPanel {
         context.setFillColor(NSColor.clear.cgColor)
         context.fill(CGRect(origin: .zero, size: size))
         
-        // Draw solid black circles - template will tint
+        // Draw solid black circles - template will tint to white in dark mode
         context.setFillColor(NSColor.black.cgColor)
         
-        // Dot specifications
-        let dotRadius: CGFloat = 1.8
-        let dotSpacing: CGFloat = 3.5
+        // Dot specifications - enlarged for visibility, ~40% bigger radius
+        let dotRadius: CGFloat = 2.5
+        let dotSpacing: CGFloat = 3.0
         
-        // Starting position to center the grid
+        // Starting position to center the grid with even padding
         let gridWidth = dotRadius * 2 * 3 + dotSpacing * 2
         let gridHeight = dotRadius * 2 * 4 + dotSpacing * 3  // 4 rows total
         let startX = (size.width - gridWidth) / 2 + dotRadius
@@ -1268,12 +1269,23 @@ final class StatusConsole: NSPanel {
                 )
                 let imageRect = NSRect(origin: imageOrigin, size: imageSize)
                 
-                // Template images tint to match appearance
-                let tintColor = dark ? NSColor.labelColor : NSColor.labelColor
                 if buttonImage.isTemplate {
+                    // Template images: use image as mask with tint color
+                    // Dark mode = white icons, light mode = dark icons
+                    let tintColor = dark ? NSColor.white : NSColor.black
+                    
+                    NSGraphicsContext.saveGraphicsState()
+                    
+                    // Fill rect with tint color
                     tintColor.setFill()
-                    buttonImage.draw(in: imageRect, from: .zero, operation: .sourceOver, fraction: 1.0)
+                    imageRect.fill()
+                    
+                    // Use image as mask (destinationIn keeps only where image has alpha)
+                    buttonImage.draw(in: imageRect, from: NSRect.zero, operation: .destinationIn, fraction: 1.0)
+                    
+                    NSGraphicsContext.restoreGraphicsState()
                 } else {
+                    // Non-template images: draw directly
                     buttonImage.draw(in: imageRect, from: .zero, operation: .sourceOver, fraction: 1.0)
                 }
             } else {
