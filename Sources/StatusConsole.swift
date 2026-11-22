@@ -353,7 +353,9 @@ final class StatusConsole: NSPanel {
         outputModeButton = RaisedChromeButton(title: outputMode.label, target: self, action: #selector(toggleOutputMode(_:)))
         outputModeButton.setContentHuggingPriority(.required, for: .horizontal)
 
-        sourceButton = RaisedChromeButton(iconName: "keyboard-icon", target: self, action: #selector(toggleSource(_:)))
+        // DigitSource button shows icon for CURRENT mode (numpad keypad icon or keyboard icon)
+        let sourceIconName = digitSource == .numpad ? "keypad-icon" : "keyboard-icon"
+        sourceButton = RaisedChromeButton(iconName: sourceIconName, target: self, action: #selector(toggleSource(_:)))
         sourceButton.setContentHuggingPriority(.required, for: .horizontal)
         sourceButton.toolTip = "切換碼元來源（小鍵盤／鍵盤）"
 
@@ -489,8 +491,98 @@ final class StatusConsole: NSPanel {
 
     @objc private func toggleSource(_ sender: Any?) {
         digitSource.toggle()
+        updateSourceButtonIcon()
         onDigitSourceChanged?(digitSource)
         NSLog("[CKC] digitSource → %@", digitSource.rawValue)
+    }
+    
+    private func updateSourceButtonIcon() {
+        let image: NSImage?
+        if digitSource == .numpad {
+            // Use programmatic keypad icon or cached "keypad-icon"
+            image = NSImage(named: "keypad-icon") ?? Self.createKeypadIcon()
+        } else {
+            // Use Flaticon keyboard icon
+            image = NSImage(named: "keyboard-icon")
+        }
+        if let img = image {
+            img.isTemplate = true
+            sourceButton.image = img
+        }
+    }
+    
+    /// Create original vector keypad icon programmatically (generic numeric keypad motif).
+    /// Clean native drawing, no watermarks. Template-tintable, crisp at Retina scales.
+    private static func createKeypadIcon() -> NSImage? {
+        // Check if already cached
+        if let cached = NSImage(named: "keypad-icon-programmatic") {
+            return cached
+        }
+        
+        let size = CGSize(width: 48, height: 64)  // Vertical keypad aspect ratio
+        let image = NSImage(size: size)
+        image.lockFocus()
+        
+        guard let context = NSGraphicsContext.current?.cgContext else {
+            image.unlockFocus()
+            return nil
+        }
+        
+        // Drawing on transparent background - will be tinted as template
+        context.setFillColor(NSColor.clear.cgColor)
+        context.fill(CGRect(origin: .zero, size: size))
+        
+        // Draw in black - template image will tint to match appearance
+        context.setStrokeColor(NSColor.black.cgColor)
+        context.setLineWidth(3.0)
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+        
+        // Outer rounded rectangle (keypad body)
+        let outerRect = CGRect(x: 4, y: 4, width: 40, height: 56)
+        let outerPath = NSBezierPath(roundedRect: outerRect, xRadius: 4, yRadius: 4)
+        outerPath.lineWidth = 3.0
+        outerPath.stroke()
+        
+        // 3 columns × 4 rows of keys (3×3 grid + bottom row)
+        let keySize: CGFloat = 8
+        let keySpacing: CGFloat = 4
+        let startX: CGFloat = 10
+        let startY: CGFloat = 10
+        
+        // Draw 3×3 grid of square keys
+        for row in 0..<3 {
+            for col in 0..<3 {
+                let x = startX + CGFloat(col) * (keySize + keySpacing)
+                let y = startY + CGFloat(row) * (keySize + keySpacing)
+                let keyRect = CGRect(x: x, y: y, width: keySize, height: keySize)
+                let keyPath = NSBezierPath(roundedRect: keyRect, xRadius: 2, yRadius: 2)
+                keyPath.lineWidth = 2.0
+                keyPath.stroke()
+            }
+        }
+        
+        // Bottom row: tall key (left) and wide key (right)
+        let bottomY = startY + 3 * (keySize + keySpacing)
+        
+        // Tall left key (like 0 or Enter on numeric keypad)
+        let tallKeyRect = CGRect(x: startX, y: bottomY, width: keySize, height: keySize + keySpacing + keySize)
+        let tallKeyPath = NSBezierPath(roundedRect: tallKeyRect, xRadius: 2, yRadius: 2)
+        tallKeyPath.lineWidth = 2.0
+        tallKeyPath.stroke()
+        
+        // Wide right keys (bottom row middle and right)
+        for col in 1..<3 {
+            let x = startX + CGFloat(col) * (keySize + keySpacing)
+            let keyRect = CGRect(x: x, y: bottomY, width: keySize, height: keySize)
+            let keyPath = NSBezierPath(roundedRect: keyRect, xRadius: 2, yRadius: 2)
+            keyPath.lineWidth = 2.0
+            keyPath.stroke()
+        }
+        
+        image.unlockFocus()
+        image.setName("keypad-icon-programmatic")  // Cache for reuse
+        return image
     }
 
     @objc private func toggleOutputMode(_ sender: Any?) {
