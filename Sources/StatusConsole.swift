@@ -499,11 +499,11 @@ final class StatusConsole: NSPanel {
     private func updateSourceButtonIcon() {
         let image: NSImage?
         if digitSource == .numpad {
-            // Use programmatic keypad icon or cached "keypad-icon"
-            image = NSImage(named: "keypad-icon") ?? Self.createKeypadIcon()
+            // Use programmatic numpad dot-grid icon (telephone keypad layout)
+            image = Self.createNumpadIcon()
         } else {
-            // Use Flaticon keyboard icon
-            image = NSImage(named: "keyboard-icon")
+            // Use programmatic keyboard icon (full keyboard with frame)
+            image = Self.createKeyboardIcon()
         }
         if let img = image {
             let resized = Self.resizeIconForButton(img)
@@ -541,15 +541,16 @@ final class StatusConsole: NSPanel {
         return resized
     }
     
-    /// Create original vector keypad icon programmatically (generic numeric keypad motif).
-    /// Clean native drawing, no watermarks. Template-tintable, crisp at Retina scales.
-    private static func createKeypadIcon() -> NSImage? {
+    /// Create full keyboard icon programmatically matching Andrew's supplied design.
+    /// Thick rounded frame, three rows of keys, wide spacebar. Template-tintable, Retina-crisp.
+    private static func createKeyboardIcon() -> NSImage? {
         // Check if already cached
-        if let cached = NSImage(named: "keypad-icon-programmatic") {
+        if let cached = NSImage(named: "keyboard-icon-programmatic") {
             return cached
         }
         
-        let size = CGSize(width: 16, height: 20)  // Compact vertical keypad aspect ratio
+        // Wide aspect ratio to match keyboard shape
+        let size = CGSize(width: 20, height: 13)
         let image = NSImage(size: size)
         image.lockFocus()
         
@@ -558,60 +559,132 @@ final class StatusConsole: NSPanel {
             return nil
         }
         
-        // Drawing on transparent background - will be tinted as template
+        // Transparent background - template image will tint to match appearance
         context.setFillColor(NSColor.clear.cgColor)
         context.fill(CGRect(origin: .zero, size: size))
         
-        // Draw in black - template image will tint to match appearance
-        context.setStrokeColor(NSColor.black.cgColor)
-        context.setLineWidth(1.0)
-        context.setLineCap(.round)
-        context.setLineJoin(.round)
+        // Draw in black with fills - template will tint
+        context.setFillColor(NSColor.black.cgColor)
         
-        // Outer rounded rectangle (keypad body)
-        let outerRect = CGRect(x: 1, y: 1, width: 14, height: 18)
-        let outerPath = NSBezierPath(roundedRect: outerRect, xRadius: 1.5, yRadius: 1.5)
-        outerPath.lineWidth = 1.0
+        // Outer thick rounded frame
+        let frameThickness: CGFloat = 1.5
+        let outerRect = CGRect(x: 0.5, y: 0.5, width: 19, height: 12)
+        let outerPath = NSBezierPath(roundedRect: outerRect, xRadius: 2.5, yRadius: 2.5)
+        outerPath.lineWidth = frameThickness
+        NSColor.black.setStroke()
         outerPath.stroke()
         
-        // 3 columns × 4 rows of keys (3×3 grid + bottom row)
-        let keySize: CGFloat = 2.5
-        let keySpacing: CGFloat = 1.5
-        let startX: CGFloat = 3.5
-        let startY: CGFloat = 3.5
+        // Inner white area (will be cleared/transparent inside frame)
+        let innerRect = outerRect.insetBy(dx: frameThickness + 0.5, dy: frameThickness + 0.5)
         
-        // Draw 3×3 grid of square keys
+        // Key dimensions
+        let keyHeight: CGFloat = 1.5
+        let keySpacing: CGFloat = 0.8
+        let smallKeyWidth: CGFloat = 1.8
+        let mediumKeyWidth: CGFloat = 2.5
+        
+        // Starting position for keys (inside frame)
+        let keysStartX = innerRect.minX + 0.5
+        let keysStartY = innerRect.minY + 0.5
+        
+        // Row 1 (top): 4 small keys + 1 wider key (like backspace)
+        var currentX = keysStartX
+        let row1Y = keysStartY + (innerRect.height - keyHeight * 3 - keySpacing * 2) / 2 + keyHeight * 2 + keySpacing * 2
+        for i in 0..<4 {
+            let keyPath = NSBezierPath(roundedRect: NSRect(x: currentX, y: row1Y, width: smallKeyWidth, height: keyHeight), xRadius: 0.4, yRadius: 0.4)
+            keyPath.fill()
+            currentX += smallKeyWidth + keySpacing
+        }
+        // Wider key at end
+        let wideKeyPath = NSBezierPath(roundedRect: NSRect(x: currentX, y: row1Y, width: mediumKeyWidth, height: keyHeight), xRadius: 0.4, yRadius: 0.4)
+        wideKeyPath.fill()
+        
+        // Row 2 (middle): 5 medium-width keys
+        currentX = keysStartX
+        let row2Y = keysStartY + (innerRect.height - keyHeight * 3 - keySpacing * 2) / 2 + keyHeight + keySpacing
+        for i in 0..<5 {
+            let keyPath = NSBezierPath(roundedRect: NSRect(x: currentX, y: row2Y, width: mediumKeyWidth, height: keyHeight), xRadius: 0.4, yRadius: 0.4)
+            keyPath.fill()
+            currentX += mediumKeyWidth + keySpacing
+        }
+        
+        // Row 3 (bottom): 2 small keys + wide spacebar + 1 small key
+        currentX = keysStartX
+        let row3Y = keysStartY + (innerRect.height - keyHeight * 3 - keySpacing * 2) / 2
+        for i in 0..<2 {
+            let keyPath = NSBezierPath(roundedRect: NSRect(x: currentX, y: row3Y, width: smallKeyWidth, height: keyHeight), xRadius: 0.4, yRadius: 0.4)
+            keyPath.fill()
+            currentX += smallKeyWidth + keySpacing
+        }
+        // Wide spacebar
+        let spacebarWidth = mediumKeyWidth * 2 + keySpacing
+        let spacebarPath = NSBezierPath(roundedRect: NSRect(x: currentX, y: row3Y, width: spacebarWidth, height: keyHeight), xRadius: 0.4, yRadius: 0.4)
+        spacebarPath.fill()
+        currentX += spacebarWidth + keySpacing
+        // Last small key
+        let lastKeyPath = NSBezierPath(roundedRect: NSRect(x: currentX, y: row3Y, width: smallKeyWidth, height: keyHeight), xRadius: 0.4, yRadius: 0.4)
+        lastKeyPath.fill()
+        
+        image.unlockFocus()
+        image.isTemplate = true
+        image.setName("keyboard-icon-programmatic")
+        return image
+    }
+    
+    /// Create numpad dot-grid icon programmatically matching Andrew's supplied design.
+    /// Ten solid circles in telephone keypad layout: 3×3 grid + 1 centered dot. Template-tintable.
+    private static func createNumpadIcon() -> NSImage? {
+        // Check if already cached
+        if let cached = NSImage(named: "numpad-icon-programmatic") {
+            return cached
+        }
+        
+        // Square aspect ratio for dot grid
+        let size = CGSize(width: 14, height: 16)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        
+        guard let context = NSGraphicsContext.current?.cgContext else {
+            image.unlockFocus()
+            return nil
+        }
+        
+        // Transparent background
+        context.setFillColor(NSColor.clear.cgColor)
+        context.fill(CGRect(origin: .zero, size: size))
+        
+        // Draw solid black circles - template will tint
+        context.setFillColor(NSColor.black.cgColor)
+        
+        // Dot specifications
+        let dotRadius: CGFloat = 1.8
+        let dotSpacing: CGFloat = 3.5
+        
+        // Starting position to center the grid
+        let gridWidth = dotRadius * 2 * 3 + dotSpacing * 2
+        let gridHeight = dotRadius * 2 * 4 + dotSpacing * 3  // 4 rows total
+        let startX = (size.width - gridWidth) / 2 + dotRadius
+        let startY = (size.height - gridHeight) / 2 + dotRadius
+        
+        // Draw 3×3 grid
         for row in 0..<3 {
             for col in 0..<3 {
-                let x = startX + CGFloat(col) * (keySize + keySpacing)
-                let y = startY + CGFloat(row) * (keySize + keySpacing)
-                let keyRect = CGRect(x: x, y: y, width: keySize, height: keySize)
-                let keyPath = NSBezierPath(roundedRect: keyRect, xRadius: 0.5, yRadius: 0.5)
-                keyPath.lineWidth = 0.75
-                keyPath.stroke()
+                let centerX = startX + CGFloat(col) * (dotRadius * 2 + dotSpacing)
+                let centerY = startY + CGFloat(row) * (dotRadius * 2 + dotSpacing)
+                let dotRect = CGRect(x: centerX - dotRadius, y: centerY - dotRadius, width: dotRadius * 2, height: dotRadius * 2)
+                context.fillEllipse(in: dotRect)
             }
         }
         
-        // Bottom row: tall key (left) and two regular keys (middle, right)
-        let bottomY = startY + 3 * (keySize + keySpacing)
-        
-        // Tall left key (like 0 or Enter on numeric keypad)
-        let tallKeyRect = CGRect(x: startX, y: bottomY, width: keySize, height: keySize + keySpacing + keySize)
-        let tallKeyPath = NSBezierPath(roundedRect: tallKeyRect, xRadius: 0.5, yRadius: 0.5)
-        tallKeyPath.lineWidth = 0.75
-        tallKeyPath.stroke()
-        
-        // Regular keys (bottom row middle and right)
-        for col in 1..<3 {
-            let x = startX + CGFloat(col) * (keySize + keySpacing)
-            let keyRect = CGRect(x: x, y: bottomY, width: keySize, height: keySize)
-            let keyPath = NSBezierPath(roundedRect: keyRect, xRadius: 0.5, yRadius: 0.5)
-            keyPath.lineWidth = 0.75
-            keyPath.stroke()
-        }
+        // Draw centered bottom dot (10th dot)
+        let bottomDotX = startX + (dotRadius * 2 + dotSpacing)  // Center column
+        let bottomDotY = startY + 3 * (dotRadius * 2 + dotSpacing)
+        let bottomDotRect = CGRect(x: bottomDotX - dotRadius, y: bottomDotY - dotRadius, width: dotRadius * 2, height: dotRadius * 2)
+        context.fillEllipse(in: bottomDotRect)
         
         image.unlockFocus()
-        image.setName("keypad-icon-programmatic")  // Cache for reuse
+        image.isTemplate = true
+        image.setName("numpad-icon-programmatic")
         return image
     }
 
