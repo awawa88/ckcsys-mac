@@ -353,14 +353,15 @@ final class StatusConsole: NSPanel {
         outputModeButton = RaisedChromeButton(title: outputMode.label, target: self, action: #selector(toggleOutputMode(_:)))
         outputModeButton.setContentHuggingPriority(.required, for: .horizontal)
 
-        sourceButton = RaisedChromeButton(title: digitSource.label, target: self, action: #selector(toggleSource(_:)))
+        sourceButton = RaisedChromeButton(iconName: "keyboard-icon", target: self, action: #selector(toggleSource(_:)))
         sourceButton.setContentHuggingPriority(.required, for: .horizontal)
+        sourceButton.toolTip = "切換碼元來源（小鍵盤／鍵盤）"
 
-        anchorButton = RaisedChromeButton(title: candidateAnchor.label, target: self, action: #selector(toggleAnchor(_:)))
+        anchorButton = RaisedChromeButton(iconName: "anchor-icon", target: self, action: #selector(toggleAnchor(_:)))
         anchorButton.setContentHuggingPriority(.required, for: .horizontal)
         anchorButton.toolTip = candidateAnchor.toolTip
 
-        appearanceButton = RaisedChromeButton(title: imeAppearance.label, target: self, action: #selector(toggleAppearance(_:)))
+        appearanceButton = RaisedChromeButton(iconName: "contrast-icon", target: self, action: #selector(toggleAppearance(_:)))
         appearanceButton.setContentHuggingPriority(.required, for: .horizontal)
         appearanceButton.toolTip = imeAppearance.toolTip
 
@@ -889,6 +890,19 @@ final class StatusConsole: NSPanel {
         convenience init(title: String, target: AnyObject?, action: Selector?) {
             self.init(frame: .zero)
             self.title = title
+            self.target = target
+            self.action = action
+            commonInit()
+        }
+        
+        convenience init(iconName: String, target: AnyObject?, action: Selector?) {
+            self.init(frame: .zero)
+            if let image = NSImage(named: iconName) {
+                image.isTemplate = true  // Enable tinting based on appearance
+                self.image = image
+                self.imagePosition = .imageOnly
+                self.imageScaling = .scaleProportionallyDown
+            }
             self.target = target
             self.action = action
             commonInit()

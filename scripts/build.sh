@@ -80,6 +80,13 @@ if [[ -f "$ROOT/Resources/menuIcon.icns" ]]; then
   cp "$ROOT/Resources/menuIcon.icns" "$RES/menuIcon.icns"
 fi
 
+# StatusConsole button icons (Flaticon assets)
+for icon in keyboard-icon.png anchor-icon.png contrast-icon.png; do
+  if [[ -f "$ROOT/Resources/$icon" ]]; then
+    cp "$ROOT/Resources/$icon" "$RES/$icon"
+  fi
+done
+
 chmod +x "$MACOS/${APP_NAME}"
 
 echo "==> Ad-hoc codesign"

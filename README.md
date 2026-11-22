@@ -118,3 +118,10 @@ build/     Ckcsys.app (gitignored)
 - Bundle ID: `com.andrewlam.inputmethod.ckc` (internal — UI shows Ckcsys)
 - App icon: `AppIcon` · menu bar: `menuIcon`
 
+## Icon Credits
+
+StatusConsole button icons from [Flaticon](https://www.flaticon.com/):
+- **Keyboard icon:** [keyboard_11869518](https://www.flaticon.com/free-icon/keyboard_11869518) by [lakonicon](https://www.flaticon.com/authors/lakonicon)
+- **Anchor icon:** [anchor_17153611](https://www.flaticon.com/free-icon/anchor_17153611) by [ifans28](https://www.flaticon.com/authors/ifans28)
+- **Contrast icon:** [contrast_18382019](https://www.flaticon.com/free-icon/contrast_18382019) by [meaicon](https://www.flaticon.com/authors/meaicon)
+
