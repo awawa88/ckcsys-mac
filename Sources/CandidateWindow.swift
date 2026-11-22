@@ -1275,7 +1275,7 @@ private final class CandidateRowView: NSButton {
 // MARK: - Close Button
 
 /// macOS-style red circular close button (upper-left) for dismissing the candidate window without inserting any text.
-/// Red circle with white ×, hover effects and pointing hand cursor for discoverability.
+/// Red circle always visible; white × appears only on direct hover. Pointing hand cursor on hover.
 private final class CloseButton: NSButton {
     private var isHovered: Bool = false
     private var didPushCursor: Bool = false
@@ -1290,17 +1290,30 @@ private final class CloseButton: NSButton {
         
         isBordered = false
         bezelStyle = .inline
-        title = "×"
+        title = ""  // × hidden by default; appears only on hover
         font = NSFont.systemFont(ofSize: 12, weight: .medium)
         contentTintColor = .white
         wantsLayer = true
         layer?.cornerRadius = 7  // Half of 14pt diameter for perfect circle
         layer?.backgroundColor = Self.closeButtonRed.cgColor
+        
+        // Retina display support: native vector rendering with backing scale
+        layer?.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
+        layer?.shouldRasterize = false  // Keep vector rendering, no bitmap cache
+        layer?.drawsAsynchronously = false  // Synchronous for crisp updates
     }
     
     required init?(coder: NSCoder) { fatalError("init(coder:)") }
     
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // Update backing scale when moving between displays (Retina ↔ non-Retina)
+        if let screen = window?.screen ?? NSScreen.main {
+            layer?.contentsScale = screen.backingScaleFactor
+        }
+    }
     
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -1360,9 +1373,13 @@ private final class CloseButton: NSButton {
     private func applyChrome() {
         IMEAppearance.resolved.nsAppearance.performAsCurrentDrawingAppearance {
             if isHovered {
+                // Show × and use darker red on hover
+                title = "×"
                 layer?.backgroundColor = Self.closeButtonRedHover.cgColor
                 contentTintColor = .white
             } else {
+                // Hide × and use normal red when not hovering
+                title = ""
                 layer?.backgroundColor = Self.closeButtonRed.cgColor
                 contentTintColor = .white
             }
