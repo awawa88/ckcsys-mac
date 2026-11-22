@@ -192,13 +192,13 @@ final class CandidateWindow: NSPanel {
 
         let headerSpacer = NSView()
         headerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let header = NSStackView(views: [pageLabel, headerSpacer, closeButton])
+        let header = NSStackView(views: [closeButton, headerSpacer, pageLabel])
         header.orientation = .horizontal
         header.distribution = .fill
         header.alignment = .centerY
         header.spacing = 8
-        pageLabel.setContentHuggingPriority(.required, for: .horizontal)
         closeButton.setContentHuggingPriority(.required, for: .horizontal)
+        pageLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         // Left column: chars numbered 1–9
         leftStack = NSStackView()
@@ -1274,7 +1274,7 @@ private final class CandidateRowView: NSButton {
 
 // MARK: - Close Button
 
-/// macOS-style red circular close button (upper-right) for dismissing the candidate window without inserting any text.
+/// macOS-style red circular close button (upper-left) for dismissing the candidate window without inserting any text.
 /// Red circle with white ×, hover effects and pointing hand cursor for discoverability.
 private final class CloseButton: NSButton {
     private var isHovered: Bool = false
