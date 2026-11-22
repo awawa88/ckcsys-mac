@@ -506,9 +506,39 @@ final class StatusConsole: NSPanel {
             image = NSImage(named: "keyboard-icon")
         }
         if let img = image {
-            img.isTemplate = true
-            sourceButton.image = img
+            let resized = Self.resizeIconForButton(img)
+            resized.isTemplate = true
+            sourceButton.image = resized
         }
+    }
+    
+    /// Resize icon to fit StatusConsole button dimensions with comfortable padding.
+    /// Icons should be crisp, optically balanced, and not expand button size.
+    private static func resizeIconForButton(_ image: NSImage) -> NSImage {
+        let targetSize = NSSize(width: 16, height: 16)  // Comfortable icon size for compact buttons
+        let resized = NSImage(size: targetSize)
+        resized.lockFocus()
+        
+        // Draw image scaled to fit within target size, preserving aspect ratio
+        let imageSize = image.size
+        let aspectRatio = imageSize.width / imageSize.height
+        
+        var drawRect = NSRect(origin: .zero, size: targetSize)
+        if aspectRatio > 1.0 {
+            // Wide image (like keyboard) - fit to width
+            let scaledHeight = targetSize.width / aspectRatio
+            drawRect.origin.y = (targetSize.height - scaledHeight) / 2
+            drawRect.size.height = scaledHeight
+        } else if aspectRatio < 1.0 {
+            // Tall image (like keypad) - fit to height
+            let scaledWidth = targetSize.height * aspectRatio
+            drawRect.origin.x = (targetSize.width - scaledWidth) / 2
+            drawRect.size.width = scaledWidth
+        }
+        
+        image.draw(in: drawRect, from: .zero, operation: .copy, fraction: 1.0)
+        resized.unlockFocus()
+        return resized
     }
     
     /// Create original vector keypad icon programmatically (generic numeric keypad motif).
@@ -519,7 +549,7 @@ final class StatusConsole: NSPanel {
             return cached
         }
         
-        let size = CGSize(width: 48, height: 64)  // Vertical keypad aspect ratio
+        let size = CGSize(width: 16, height: 20)  // Compact vertical keypad aspect ratio
         let image = NSImage(size: size)
         image.lockFocus()
         
@@ -534,21 +564,21 @@ final class StatusConsole: NSPanel {
         
         // Draw in black - template image will tint to match appearance
         context.setStrokeColor(NSColor.black.cgColor)
-        context.setLineWidth(3.0)
+        context.setLineWidth(1.0)
         context.setLineCap(.round)
         context.setLineJoin(.round)
         
         // Outer rounded rectangle (keypad body)
-        let outerRect = CGRect(x: 4, y: 4, width: 40, height: 56)
-        let outerPath = NSBezierPath(roundedRect: outerRect, xRadius: 4, yRadius: 4)
-        outerPath.lineWidth = 3.0
+        let outerRect = CGRect(x: 1, y: 1, width: 14, height: 18)
+        let outerPath = NSBezierPath(roundedRect: outerRect, xRadius: 1.5, yRadius: 1.5)
+        outerPath.lineWidth = 1.0
         outerPath.stroke()
         
         // 3 columns × 4 rows of keys (3×3 grid + bottom row)
-        let keySize: CGFloat = 8
-        let keySpacing: CGFloat = 4
-        let startX: CGFloat = 10
-        let startY: CGFloat = 10
+        let keySize: CGFloat = 2.5
+        let keySpacing: CGFloat = 1.5
+        let startX: CGFloat = 3.5
+        let startY: CGFloat = 3.5
         
         // Draw 3×3 grid of square keys
         for row in 0..<3 {
@@ -556,27 +586,27 @@ final class StatusConsole: NSPanel {
                 let x = startX + CGFloat(col) * (keySize + keySpacing)
                 let y = startY + CGFloat(row) * (keySize + keySpacing)
                 let keyRect = CGRect(x: x, y: y, width: keySize, height: keySize)
-                let keyPath = NSBezierPath(roundedRect: keyRect, xRadius: 2, yRadius: 2)
-                keyPath.lineWidth = 2.0
+                let keyPath = NSBezierPath(roundedRect: keyRect, xRadius: 0.5, yRadius: 0.5)
+                keyPath.lineWidth = 0.75
                 keyPath.stroke()
             }
         }
         
-        // Bottom row: tall key (left) and wide key (right)
+        // Bottom row: tall key (left) and two regular keys (middle, right)
         let bottomY = startY + 3 * (keySize + keySpacing)
         
         // Tall left key (like 0 or Enter on numeric keypad)
         let tallKeyRect = CGRect(x: startX, y: bottomY, width: keySize, height: keySize + keySpacing + keySize)
-        let tallKeyPath = NSBezierPath(roundedRect: tallKeyRect, xRadius: 2, yRadius: 2)
-        tallKeyPath.lineWidth = 2.0
+        let tallKeyPath = NSBezierPath(roundedRect: tallKeyRect, xRadius: 0.5, yRadius: 0.5)
+        tallKeyPath.lineWidth = 0.75
         tallKeyPath.stroke()
         
-        // Wide right keys (bottom row middle and right)
+        // Regular keys (bottom row middle and right)
         for col in 1..<3 {
             let x = startX + CGFloat(col) * (keySize + keySpacing)
             let keyRect = CGRect(x: x, y: bottomY, width: keySize, height: keySize)
-            let keyPath = NSBezierPath(roundedRect: keyRect, xRadius: 2, yRadius: 2)
-            keyPath.lineWidth = 2.0
+            let keyPath = NSBezierPath(roundedRect: keyRect, xRadius: 0.5, yRadius: 0.5)
+            keyPath.lineWidth = 0.75
             keyPath.stroke()
         }
         
@@ -615,13 +645,33 @@ final class StatusConsole: NSPanel {
 
     private func refreshLabels() {
         applyChromeFonts()
-        sourceButton?.title = digitSource.label
+        // Icon buttons: update icons, not titles
+        updateSourceButtonIcon()
+        updateAnchorButtonIcon()
+        updateAppearanceButtonIcon()
+        // Text buttons: update titles
         outputModeButton?.title = outputMode.label
-        anchorButton?.title = candidateAnchor.label
         anchorButton?.toolTip = candidateAnchor.toolTip
-        appearanceButton?.title = imeAppearance.label
         appearanceButton?.toolTip = imeAppearance.toolTip
         applyCkcEnabledChrome()
+    }
+    
+    private func updateAnchorButtonIcon() {
+        // Anchor button always uses same icon, but refresh for consistency
+        if let image = NSImage(named: "anchor-icon") {
+            let resized = Self.resizeIconForButton(image)
+            resized.isTemplate = true
+            anchorButton?.image = resized
+        }
+    }
+    
+    private func updateAppearanceButtonIcon() {
+        // Contrast button always uses same icon, but refresh for consistency
+        if let image = NSImage(named: "contrast-icon") {
+            let resized = Self.resizeIconForButton(image)
+            resized.isTemplate = true
+            appearanceButton?.image = resized
+        }
     }
 
     /// On = bright LED blue; Off = dim LED blue (same hue, unlit).
@@ -990,8 +1040,10 @@ final class StatusConsole: NSPanel {
         convenience init(iconName: String, target: AnyObject?, action: Selector?) {
             self.init(frame: .zero)
             if let image = NSImage(named: iconName) {
-                image.isTemplate = true  // Enable tinting based on appearance
-                self.image = image
+                // Resize to fit button with proper inset/padding
+                let resized = StatusConsole.resizeIconForButton(image)
+                resized.isTemplate = true  // Enable tinting based on appearance
+                self.image = resized
                 self.imagePosition = .imageOnly
                 self.imageScaling = .scaleProportionallyDown
             }
@@ -1020,9 +1072,15 @@ final class StatusConsole: NSPanel {
         }
 
         override var intrinsicContentSize: NSSize {
-            let base = super.intrinsicContentSize
-            // Extra padding so the bevel reads around the glyph/label.
-            return NSSize(width: max(base.width + 10, 28), height: max(base.height + 4, 22))
+            // Icon buttons should be compact (~28×22); text buttons size to content
+            if image != nil {
+                // Fixed compact size for icon buttons (matches 縱/繁 text buttons)
+                return NSSize(width: 28, height: 22)
+            } else {
+                // Text buttons: add padding around text
+                let base = super.intrinsicContentSize
+                return NSSize(width: max(base.width + 10, 28), height: max(base.height + 4, 22))
+            }
         }
 
         override var isHighlighted: Bool {
@@ -1127,27 +1185,47 @@ final class StatusConsole: NSPanel {
             path.lineWidth = 1.0
             path.stroke()
 
-            // Title — nudge down 1pt while pressed for tactile sink.
-            let drawTitle: NSAttributedString
-            if attributedTitle.length > 0 {
-                drawTitle = attributedTitle
-            } else {
-                let color = dark ? NSColor.labelColor : NSColor.labelColor
-                let fontToUse = font ?? NSFont.menuBarFont(ofSize: 0)
-                drawTitle = NSAttributedString(
-                    string: title,
-                    attributes: [
-                        .foregroundColor: color,
-                        .font: fontToUse,
-                    ]
+            // Content: image (if present) or title, nudged down 1pt while pressed for tactile sink
+            if let buttonImage = image {
+                // Draw icon centered, with pressed nudge
+                let imageSize = buttonImage.size
+                let imageOrigin = NSPoint(
+                    x: bounds.midX - imageSize.width / 2,
+                    y: bounds.midY - imageSize.height / 2 + (pressed ? -1.0 : 0.5)
                 )
+                let imageRect = NSRect(origin: imageOrigin, size: imageSize)
+                
+                // Template images tint to match appearance
+                let tintColor = dark ? NSColor.labelColor : NSColor.labelColor
+                if buttonImage.isTemplate {
+                    tintColor.setFill()
+                    buttonImage.draw(in: imageRect, from: .zero, operation: .sourceOver, fraction: 1.0)
+                } else {
+                    buttonImage.draw(in: imageRect, from: .zero, operation: .sourceOver, fraction: 1.0)
+                }
+            } else {
+                // Draw title if no image
+                let drawTitle: NSAttributedString
+                if attributedTitle.length > 0 {
+                    drawTitle = attributedTitle
+                } else {
+                    let color = dark ? NSColor.labelColor : NSColor.labelColor
+                    let fontToUse = font ?? NSFont.menuBarFont(ofSize: 0)
+                    drawTitle = NSAttributedString(
+                        string: title,
+                        attributes: [
+                            .foregroundColor: color,
+                            .font: fontToUse,
+                        ]
+                    )
+                }
+                let titleSize = drawTitle.size()
+                let titleOrigin = NSPoint(
+                    x: bounds.midX - titleSize.width / 2,
+                    y: bounds.midY - titleSize.height / 2 + (pressed ? -1.0 : 0.5)
+                )
+                drawTitle.draw(at: titleOrigin)
             }
-            let titleSize = drawTitle.size()
-            let titleOrigin = NSPoint(
-                x: bounds.midX - titleSize.width / 2,
-                y: bounds.midY - titleSize.height / 2 + (pressed ? -1.0 : 0.5)
-            )
-            drawTitle.draw(at: titleOrigin)
         }
     }
 
