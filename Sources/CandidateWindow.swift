@@ -22,6 +22,9 @@ final class CandidateWindow: NSPanel {
 
     /// Callback when a candidate is clicked: (text: String, column: CandidateColumn)
     var onCandidateClicked: ((String, CandidateColumn) -> Void)?
+    
+    /// Callback when the close button is clicked: dismiss without inserting any candidate
+    var onCloseButtonClicked: (() -> Void)?
 
     private let pageSize = 9
     private var charCandidates: [String] = []
@@ -35,6 +38,7 @@ final class CandidateWindow: NSPanel {
 
     private var effectView: NSVisualEffectView!
     private var contentStack: NSStackView!
+    private var closeButton: NSButton!
     private var pageLabel: NSTextField!
     private var hintLabel: NSTextField!
     private var columnsStack: NSStackView!
@@ -168,18 +172,33 @@ final class CandidateWindow: NSPanel {
         contentView?.layer?.backgroundColor = NSColor.clear.cgColor
 
         // Composition digits stay in the client marked text only — not duplicated here.
+        
+        // Close button — small × in header to dismiss without inserting
+        closeButton = CloseButton()
+        closeButton.target = self
+        closeButton.action = #selector(handleCloseButtonClick)
+        closeButton.toolTip = "Close (dismiss composition)"
+        closeButton.setAccessibilityLabel("Close")
+        closeButton.setAccessibilityRole(.button)
+        closeButton.setContentHuggingPriority(.required, for: .horizontal)
+        closeButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.widthAnchor.constraint(equalToConstant: 14).isActive = true
+        closeButton.heightAnchor.constraint(equalToConstant: 14).isActive = true
+        
         pageLabel = NSTextField(labelWithString: "")
         pageLabel.textColor = .tertiaryLabelColor
         pageLabel.alignment = .right
 
         let headerSpacer = NSView()
         headerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let header = NSStackView(views: [headerSpacer, pageLabel])
+        let header = NSStackView(views: [pageLabel, headerSpacer, closeButton])
         header.orientation = .horizontal
         header.distribution = .fill
         header.alignment = .centerY
         header.spacing = 8
         pageLabel.setContentHuggingPriority(.required, for: .horizontal)
+        closeButton.setContentHuggingPriority(.required, for: .horizontal)
 
         // Left column: chars numbered 1–9
         leftStack = NSStackView()
@@ -599,6 +618,10 @@ final class CandidateWindow: NSPanel {
         let text = candidates[global]
         onCandidateClicked?(text, column)
     }
+    
+    @objc private func handleCloseButtonClick() {
+        onCloseButtonClicked?()
+    }
 
     // MARK: - Cursor
     // Inactive LSUIElement + .nonactivatingPanel: NSCursor.set() from a local
@@ -704,7 +727,9 @@ final class CandidateWindow: NSPanel {
         for row in charRowViews + phraseRowViews {
             row.refreshChrome()
         }
+        (closeButton as? CloseButton)?.refreshChrome()
         applyDigitPickHeaderColors()
+        closeButton?.needsDisplay = true
         pageLabel?.needsDisplay = true
         hintLabel?.needsDisplay = true
         leftTitleLabel?.needsDisplay = true
@@ -1244,5 +1269,103 @@ private final class CandidateRowView: NSButton {
             }
         }
         NSLog("%@", "[CKC] " + message)
+    }
+}
+
+// MARK: - Close Button
+
+/// macOS-style red circular close button (upper-right) for dismissing the candidate window without inserting any text.
+/// Red circle with white ×, hover effects and pointing hand cursor for discoverability.
+private final class CloseButton: NSButton {
+    private var isHovered: Bool = false
+    private var didPushCursor: Bool = false
+    private var trackingArea: NSTrackingArea?
+    
+    // macOS window close button colors
+    private static let closeButtonRed = NSColor(calibratedRed: 1.0, green: 0.373, blue: 0.341, alpha: 1.0) // #FF5F57
+    private static let closeButtonRedHover = NSColor(calibratedRed: 0.95, green: 0.32, blue: 0.29, alpha: 1.0)
+    
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        
+        isBordered = false
+        bezelStyle = .inline
+        title = "×"
+        font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        contentTintColor = .white
+        wantsLayer = true
+        layer?.cornerRadius = 7  // Half of 14pt diameter for perfect circle
+        layer?.backgroundColor = Self.closeButtonRed.cgColor
+    }
+    
+    required init?(coder: NSCoder) { fatalError("init(coder:)") }
+    
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let options: NSTrackingArea.Options = [
+            .activeAlways,
+            .mouseMoved,
+            .mouseEnteredAndExited,
+            .inVisibleRect,
+        ]
+        let area = NSTrackingArea(rect: .zero, options: options, owner: self, userInfo: nil)
+        addTrackingArea(area)
+        trackingArea = area
+    }
+    
+    override func mouseEntered(with event: NSEvent) {
+        setHovered(true)
+        pushHandCursorIfNeeded()
+    }
+    
+    override func mouseMoved(with event: NSEvent) {
+        if !isHovered {
+            setHovered(true)
+        }
+        pushHandCursorIfNeeded()
+    }
+    
+    override func mouseExited(with event: NSEvent) {
+        setHovered(false)
+        popHandCursorIfNeeded()
+    }
+    
+    private func pushHandCursorIfNeeded() {
+        guard !didPushCursor else { return }
+        NSCursor.pointingHand.push()
+        didPushCursor = true
+    }
+    
+    private func popHandCursorIfNeeded() {
+        guard didPushCursor else { return }
+        NSCursor.pop()
+        didPushCursor = false
+    }
+    
+    private func setHovered(_ hovered: Bool) {
+        guard isHovered != hovered else { return }
+        isHovered = hovered
+        applyChrome()
+    }
+    
+    fileprivate func refreshChrome() {
+        applyChrome()
+    }
+    
+    private func applyChrome() {
+        IMEAppearance.resolved.nsAppearance.performAsCurrentDrawingAppearance {
+            if isHovered {
+                layer?.backgroundColor = Self.closeButtonRedHover.cgColor
+                contentTintColor = .white
+            } else {
+                layer?.backgroundColor = Self.closeButtonRed.cgColor
+                contentTintColor = .white
+            }
+        }
     }
 }
