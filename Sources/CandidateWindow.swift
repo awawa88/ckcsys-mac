@@ -1276,10 +1276,12 @@ private final class CandidateRowView: NSButton {
 
 /// macOS-style red circular close button (upper-left) for dismissing the candidate window without inserting any text.
 /// Red circle always visible; white × appears only on direct hover. Pointing hand cursor on hover.
+/// Subtle glass effect: glossy highlight gradient and gentle depth.
 private final class CloseButton: NSButton {
     private var isHovered: Bool = false
     private var didPushCursor: Bool = false
     private var trackingArea: NSTrackingArea?
+    private var glassGradientLayer: CAGradientLayer?
     
     // macOS window close button colors
     private static let closeButtonRed = NSColor(calibratedRed: 1.0, green: 0.373, blue: 0.341, alpha: 1.0) // #FF5F57
@@ -1301,6 +1303,35 @@ private final class CloseButton: NSButton {
         layer?.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
         layer?.shouldRasterize = false  // Keep vector rendering, no bitmap cache
         layer?.drawsAsynchronously = false  // Synchronous for crisp updates
+        
+        // Glass effect: subtle glossy highlight gradient for depth
+        setupGlassEffect()
+    }
+    
+    private func setupGlassEffect() {
+        guard let baseLayer = layer else { return }
+        
+        // Glossy highlight gradient on top half of circle
+        let gradient = CAGradientLayer()
+        gradient.type = .axial
+        gradient.frame = CGRect(x: 0, y: 0, width: 14, height: 14)
+        gradient.cornerRadius = 7
+        gradient.masksToBounds = true
+        
+        // Subtle white highlight at top fading to transparent
+        let highlightTop = NSColor.white.withAlphaComponent(0.35).cgColor
+        let highlightMid = NSColor.white.withAlphaComponent(0.12).cgColor
+        let transparent = NSColor.clear.cgColor
+        gradient.colors = [highlightTop, highlightMid, transparent]
+        gradient.locations = [0.0, 0.4, 0.65]
+        gradient.startPoint = CGPoint(x: 0.5, y: 0.0)  // Top center
+        gradient.endPoint = CGPoint(x: 0.5, y: 1.0)    // Bottom center
+        
+        // Match Retina backing scale
+        gradient.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
+        
+        baseLayer.addSublayer(gradient)
+        glassGradientLayer = gradient
     }
     
     required init?(coder: NSCoder) { fatalError("init(coder:)") }
@@ -1311,7 +1342,9 @@ private final class CloseButton: NSButton {
         super.viewDidMoveToWindow()
         // Update backing scale when moving between displays (Retina ↔ non-Retina)
         if let screen = window?.screen ?? NSScreen.main {
-            layer?.contentsScale = screen.backingScaleFactor
+            let scale = screen.backingScaleFactor
+            layer?.contentsScale = scale
+            glassGradientLayer?.contentsScale = scale
         }
     }
     
