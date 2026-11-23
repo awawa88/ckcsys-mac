@@ -23,9 +23,19 @@ Public home: https://github.com/awawa88/ckcsys-mac
 Prebuilt installer (GitHub Releases):
 
 - **Latest release:** https://github.com/awawa88/ckcsys-mac/releases/latest
-- **v0.2.62 pkg:** https://github.com/awawa88/ckcsys-mac/releases/download/v0.2.62/Ckcsys-Installer.pkg
+- **v0.2.77 pkg:** https://github.com/awawa88/ckcsys-mac/releases/download/v0.2.77/Ckcsys-Installer.pkg
 
 Double-click the `.pkg` to install into `~/Library/Input Methods/Ckcsys.app`, then add **Ckcsys** under System Settings → Keyboard → Input Sources. The package is ad-hoc signed (not notarized); if Gatekeeper blocks it, right-click → Open.
+
+### What's New in v0.2.77
+
+- **Cantonese Phrases**: Added 616052 唔使 and other common Cantonese expressions
+- **Mouse-Driven Close**: Upper-left red glass button with hover-only × to dismiss candidate window
+- **Compact Console Icons**: Mode/anchor/appearance buttons now show icons instead of text
+  - White icons in dark mode, dark icons in light mode (proper template tinting)
+  - Numpad/keyboard icon switches based on digit source mode
+- **Flaticon Assets**: Professional telephone keypad, anchor, and contrast icons
+- **Retina Support**: Glass effects and icons render crisply at all display scales
 
 ## Build / install
 
