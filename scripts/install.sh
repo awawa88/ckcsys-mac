@@ -56,14 +56,20 @@ rm -rf "$DEST"
 rm -rf "$DEST_DIR/CKC縱橫.app"
 cp -R "$SRC" "$DEST"
 
-# Preserve existing signature if present (don't destroy Developer ID signatures)
-# Only re-sign if unsigned or signature is invalid
-if ! codesign --verify "$DEST" 2>/dev/null; then
-  echo "Re-signing with ad-hoc (no existing valid signature)"
-  codesign --force --deep --sign - "$DEST"
-else
+# Verify and preserve signatures
+# Development: Re-sign with ad-hoc if invalid/missing
+# Production: FAIL if signature invalid (never downgrade to ad-hoc)
+if codesign --verify "$DEST" 2>/dev/null; then
   echo "Preserving existing code signature"
-  codesign -dv "$DEST" 2>&1 | grep "Authority" || true
+  codesign -dv "$DEST" 2>&1 | grep "Authority" || echo "  (ad-hoc)"
+elif [[ "${PRODUCTION_SIGNING:-}" == "1" ]]; then
+  echo "ERROR: Production install requires valid Developer ID signature" >&2
+  echo "       App signature is invalid or missing" >&2
+  echo "       Build must be signed before installation in production mode" >&2
+  exit 1
+else
+  echo "Development: Re-signing with ad-hoc (no existing valid signature)"
+  codesign --force --sign - "$DEST"
 fi
 
 # TextInputMenu may have auto-relaunched mid-copy; kill again then open the finished bundle.

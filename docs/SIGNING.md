@@ -1,336 +1,209 @@
-# Code Signing and Notarization Guide
+# Code Signing and Notarization
 
-This document describes the Developer ID signing and notarization workflow for Ckcsys.app.
+Developer ID signing and notarization support for Ckcsys.app.
 
-## Overview
+## Modes
 
-Ckcsys supports two signing modes:
-
-1. **Development (ad-hoc)**: Default mode for local development
-2. **Production (Developer ID)**: For distribution outside the Mac App Store
+**Development (default)**: Ad-hoc signing, no certificates required
+**Production**: Developer ID Application + Installer certificates required
 
 ## Requirements
 
-### Development Signing (Ad-hoc)
-- No special requirements
-- Works on any Mac with Xcode command-line tools
+### Development
+- Xcode command-line tools
 
-### Production Signing (Developer ID)
+### Production
 - Apple Developer account ($99/year)
 - Developer ID Application certificate
-- Developer ID Installer certificate
-- Keychain profile for notarytool (recommended)
+- Developer ID Installer certificate  
+- Notarytool keychain profile (for notarization)
 
 ## Certificates
 
-### Obtaining Certificates
+### Obtaining
 
-1. **Join Apple Developer Program**: https://developer.apple.com/programs/
-2. **Create Certificates**:
-   - Log in to https://developer.apple.com/account
-   - Navigate to Certificates, Identifiers & Profiles
-   - Create two certificates:
-     - **Developer ID Application** - for signing the app
-     - **Developer ID Installer** - for signing the installer package
+1. Join Apple Developer Program: https://developer.apple.com/programs/
+2. Create certificates at https://developer.apple.com/account
+   - Developer ID Application (for app)
+   - Developer ID Installer (for package)
+3. Download and install in Keychain Access
+4. Verify: `security find-identity -v -p codesigning`
 
-3. **Download and Install**:
-   - Download both certificates (.cer files)
-   - Double-click to install in Keychain Access
-   - Verify they appear in Keychain under "My Certificates"
+## Development Builds
 
-### Verifying Certificates
+No configuration needed:
 
 ```bash
-# List all code signing identities
-security find-identity -v -p codesigning
-
-# Should show entries like:
-# 1) HASH "Developer ID Application: Your Name (TEAMID)"
-# 2) HASH "Developer ID Installer: Your Name (TEAMID)"
+./scripts/build.sh           # → build/Ckcsys.app (ad-hoc signed)
+./scripts/make-installer.sh  # → ~/Desktop/Ckcsys-Installer.pkg (unsigned)
+./scripts/install.sh         # Install locally
 ```
 
-## Development Builds (Ad-hoc Signing)
+## Production Builds
 
-Default mode - no configuration needed:
-
-```bash
-# Build with ad-hoc signature
-./scripts/build.sh
-
-# Create installer with ad-hoc signatures
-./scripts/make-installer.sh
-
-# Install locally
-./scripts/install.sh
-```
-
-**Result**: 
-- App: ad-hoc signed
-- Package: unsigned
-
-## Production Builds (Developer ID)
-
-### Environment Variables
-
-Set these in your shell or CI/CD environment:
+### Environment
 
 ```bash
-# Required for production signing
 export PRODUCTION_SIGNING=1
 export DEVELOPER_ID_APPLICATION="Developer ID Application: Your Name (TEAMID)"
 export DEVELOPER_ID_INSTALLER="Developer ID Installer: Your Name (TEAMID)"
-
-# Optional - customize timestamp server
-export CODESIGN_TIMESTAMP_URL="http://timestamp.apple.com/ts01"
 ```
 
-### Building
+### Build & Sign
 
 ```bash
-# 1. Build and sign app with Developer ID Application
-PRODUCTION_SIGNING=1 \
-  DEVELOPER_ID_APPLICATION="Developer ID Application: Your Name (TEAMID)" \
-  ./scripts/build.sh
-
-# 2. Create and sign installer with Developer ID Installer  
-PRODUCTION_SIGNING=1 \
-  DEVELOPER_ID_APPLICATION="Developer ID Application: Your Name (TEAMID)" \
-  DEVELOPER_ID_INSTALLER="Developer ID Installer: Your Name (TEAMID)" \
-  ./scripts/make-installer.sh
-
-# Output: ~/Desktop/Ckcsys-Installer.pkg (signed)
+./scripts/build.sh           # → Developer ID signed app
+./scripts/make-installer.sh  # → Developer ID signed package
 ```
 
-### Verifying Signatures
+### Verify
 
 ```bash
-# Verify app signature
+# App signature
 codesign -dv --verbose=4 build/Ckcsys.app
-# Should show: Authority=Developer ID Application: Your Name (TEAMID)
+# Look for: Authority=Developer ID Application
 
-# Verify hardened runtime
+# Hardened runtime
 codesign -d --entitlements - build/Ckcsys.app | grep runtime
 
-# Verify package signature
+# Package signature  
 pkgutil --check-signature ~/Desktop/Ckcsys-Installer.pkg
-# Should show: Status: signed by a developer certificate
+# Look for: signed by a developer certificate
 ```
 
 ## Notarization
 
-Notarization is Apple's process for scanning your app for malicious content.
+### Setup (One-Time)
 
-### Setup Notary Tool
-
-1. **Create App-Specific Password**:
-   - Go to https://appleid.apple.com
-   - Sign in with your Apple ID
-   - Navigate to Security → App-Specific Passwords
-   - Generate a new password (save it securely)
-
-2. **Store Credentials in Keychain**:
 ```bash
-# Replace with your Apple ID and app-specific password
-xcrun notarytool store-credentials "notary-profile" \
-  --apple-id "your@email.com" \
-  --team-id "TEAMID" \
-  --password "xxxx-xxxx-xxxx-xxxx"
+# Create keychain profile with interactive prompt (no password on command line)
+xcrun notarytool store-credentials "notary-profile"
+# Prompts for: Apple ID, Team ID, app-specific password
 
-# This creates a keychain profile named "notary-profile"
-# No secrets in repo or logs!
-```
-
-3. **Verify Profile**:
-```bash
+# Verify profile
 xcrun notarytool history --keychain-profile "notary-profile"
 ```
 
-### Submitting for Notarization
+**App-Specific Password**: Generate at https://appleid.apple.com → Security → App-Specific Passwords
+
+### Submit
 
 ```bash
-# Submit signed package for notarization
 xcrun notarytool submit ~/Desktop/Ckcsys-Installer.pkg \
   --keychain-profile "notary-profile" \
   --wait
-
-# Output will show:
-# - Submission ID (save this!)
-# - Status: Accepted (success) or Rejected (failure)
 ```
 
-### Checking Notarization Status
+### Check Status
 
 ```bash
-# Check specific submission
-xcrun notarytool info SUBMISSION-ID \
-  --keychain-profile "notary-profile"
+# View submission info
+xcrun notarytool info SUBMISSION-ID --keychain-profile "notary-profile"
 
 # Download log if rejected
-xcrun notarytool log SUBMISSION-ID \
-  --keychain-profile "notary-profile" \
-  notary-log.json
-
-# View reasons for rejection
-cat notary-log.json | jq '.issues'
+xcrun notarytool log SUBMISSION-ID --keychain-profile "notary-profile" log.json
+cat log.json | jq '.issues'
 ```
 
-### Stapling the Ticket
-
-After successful notarization, attach the ticket to the package:
+### Staple Ticket
 
 ```bash
-# Staple notarization ticket to package
+# Attach notarization ticket to package
 xcrun stapler staple ~/Desktop/Ckcsys-Installer.pkg
 
-# Verify stapling
+# Verify
 xcrun stapler validate ~/Desktop/Ckcsys-Installer.pkg
-# Should show: The validate action worked!
-
-# Also verify with spctl
 spctl -a -v --type install ~/Desktop/Ckcsys-Installer.pkg
 # Should show: source=Notarized Developer ID
 ```
 
-### Complete Production Workflow
-
-```bash
-#!/bin/bash
-# Production build, sign, notarize, and staple
-
-set -euo pipefail
-
-# 1. Set environment
-export PRODUCTION_SIGNING=1
-export DEVELOPER_ID_APPLICATION="Developer ID Application: Your Name (TEAMID)"
-export DEVELOPER_ID_INSTALLER="Developer ID Installer: Your Name (TEAMID)"
-
-# 2. Build with Developer ID signature
-./scripts/build.sh
-
-# 3. Create signed installer
-./scripts/make-installer.sh
-
-PKG=~/Desktop/Ckcsys-Installer.pkg
-
-# 4. Submit for notarization
-echo "Submitting for notarization..."
-xcrun notarytool submit "$PKG" \
-  --keychain-profile "notary-profile" \
-  --wait
-
-# 5. Staple ticket
-echo "Stapling ticket..."
-xcrun stapler staple "$PKG"
-
-# 6. Verify
-echo "Verifying..."
-xcrun stapler validate "$PKG"
-spctl -a -v --type install "$PKG"
-
-echo "✓ Production package ready: $PKG"
-```
-
 ## Signature Preservation
 
-The build scripts automatically preserve existing signatures:
+Production signatures are NEVER silently downgraded:
 
-- `install.sh`: Only re-signs if no valid signature exists
-- `postinstall`: Only re-signs if no valid signature exists
-- Never destroys Developer ID signatures
+- **install.sh**: Fails if `PRODUCTION_SIGNING=1` and signature invalid
+- **postinstall**: Fails if Developer ID signature becomes invalid
+- **Development**: Re-signs with ad-hoc only if no production signature detected
 
-This ensures that:
-- Production builds remain properly signed after installation
-- Notarization tickets are preserved
-- Users don't see Gatekeeper warnings
+This ensures production packages cannot be corrupted during installation.
+
+## Implementation Details
+
+### Scripts
+
+**codesign-helper.sh**: Unified signing handler
+- Production: Developer ID + hardened runtime + timestamp
+- Development: Ad-hoc signature
+- No `--deep` shortcuts (proper bundle signing)
+- Fails fast if production identity missing
+
+**build.sh**: Calls codesign-helper, respects `PRODUCTION_SIGNING`
+
+**make-installer.sh**: Signs app + package, fails if production mode but identity missing
+
+**install.sh**: Preserves signatures, fails closed in production mode
+
+### No Entitlements
+
+IMK apps require no entitlements unless using protected APIs. Ckcsys uses none, so no entitlements file exists. Hardened runtime works without exceptions.
 
 ## Troubleshooting
 
-### "No identity found" Error
+| Issue | Solution |
+|-------|----------|
+| "No identity found" | Install certificates from Apple Developer portal |
+| "Signature invalid after install" | Check `PRODUCTION_SIGNING` env matches build |
+| Notarization rejected | Get log: `xcrun notarytool log ID --keychain-profile "notary-profile" log.json` |
+| "Package damaged" on user Mac | Verify: `spctl -a -v --type install package.pkg` |
 
-**Cause**: Developer ID certificate not installed
+## Common Commands
 
-**Solution**:
-1. Download certificate from Apple Developer portal
-2. Install in Keychain Access
-3. Verify: `security find-identity -v -p codesigning`
-
-### "Hardened runtime" Warnings
-
-**Cause**: Missing entitlements or incompatible APIs
-
-**Solution**:
-1. Check `scripts/entitlements.plist` for required permissions
-2. Review codesign output for specific runtime violations
-3. Add minimal entitlements only as needed
-
-### Notarization Rejected
-
-**Cause**: Various - check log for details
-
-**Solution**:
 ```bash
-# Get rejection reasons
-xcrun notarytool log SUBMISSION-ID \
-  --keychain-profile "notary-profile" \
-  notary-log.json
-cat notary-log.json | jq '.issues'
+# List identities
+security find-identity -v -p codesigning
 
-# Common issues:
-# - Invalid signature: Re-sign with correct identity
-# - Missing hardened runtime: Check codesign-helper.sh includes --options runtime
-# - Invalid entitlements: Review entitlements.plist
+# Check signature
+codesign --verify build/Ckcsys.app && echo "Valid" || echo "Invalid"
+
+# View signature details
+codesign -dv --verbose=4 build/Ckcsys.app
+
+# Check hardened runtime
+codesign -d --entitlements - build/Ckcsys.app | grep runtime
 ```
 
-### "Package is damaged" on User Mac
+## Security
 
-**Cause**: Missing notarization staple or signature
-
-**Solution**:
-1. Verify package is notarized: `spctl -a -v --type install package.pkg`
-2. Ensure ticket is stapled: `xcrun stapler validate package.pkg`
-3. If valid, user may need to approve in System Settings → Privacy & Security
-
-## Security Best Practices
-
-1. **Never commit secrets**: Use keychain profiles, not passwords in scripts
-2. **Minimal entitlements**: Only grant permissions the app actually needs
-3. **No library validation bypass**: Keep security features enabled
-4. **Verify before distribution**: Always test signed packages on clean Mac
-5. **Keep certificates secure**: Store in Keychain, not files
+- Minimal entitlements (none currently needed)
+- No library validation bypass
+- No JIT compilation
+- Hardened runtime enabled in production
+- Keychain profiles for credentials (no passwords in scripts)
+- Production signature verification prevents tampering
 
 ## Testing
 
-Run automated tests to verify signing configuration:
+**Static validation**: `./scripts/test-signing.sh`
+- Checks script logic, argument parsing, environment handling
+- Does NOT run codesign (requires macOS)
+- Validates guards against missing identities
 
-```bash
-./scripts/test-signing.sh
-```
-
-Tests verify:
-- Script argument parsing
-- Environment variable handling
-- Signature preservation logic
-- Production signing guards (fail if identity missing)
-- Hardened runtime configuration
-- Entitlements validity
+**Manual testing** (requires macOS + certificates):
+1. Development build
+2. Production build with identities
+3. Package creation
+4. Signature verification
+5. Installation with signature preservation
 
 ## Limitations
 
-- **No automatic certificate generation**: Certificates must be obtained from Apple
-- **No automatic notarization**: Manual submission required
-- **Testing requires macOS**: Signing tools only available on Mac
-- **Keychain access required**: Certificates must be in macOS Keychain
+- Certificates must be obtained from Apple (cannot generate)
+- Signing requires macOS (codesign tools)
+- Notarization requires manual submission
+- Testing requires real Mac with certificates
 
 ## References
 
-- Apple Developer Documentation: https://developer.apple.com/documentation/security/notarizing_macos_software_before_distribution
 - Notarizing macOS Software: https://developer.apple.com/documentation/security/notarizing_macos_software_before_distribution
 - Code Signing Guide: https://developer.apple.com/library/archive/documentation/Security/Conceptual/CodeSigningGuide/
 - Hardened Runtime: https://developer.apple.com/documentation/security/hardened_runtime
-
-## Support
-
-For issues with:
-- **Certificates**: Contact Apple Developer Support
-- **Notarization**: Check https://developer.apple.com/system-status/
-- **Build scripts**: File an issue in this repository

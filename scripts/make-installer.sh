@@ -119,13 +119,22 @@ else
 fi
 sleep 0.3
 
-# Preserve existing signature if present (don't destroy Developer ID signatures)
-# Only re-sign if unsigned or signature is invalid
-if ! codesign --verify "$DEST" 2>/dev/null; then
-  echo "Re-signing with ad-hoc (no existing valid signature)"
-  codesign --force --deep --sign - "$DEST" 2>/dev/null || true
-else
+# Verify signature - NEVER downgrade production Developer ID to ad-hoc
+# Production pkg: Fail if signature invalid (payload must be properly signed)
+# Development pkg: Re-sign with ad-hoc if needed
+if codesign --verify "$DEST" 2>/dev/null; then
   echo "Preserving existing code signature"
+  codesign -dv "$DEST" 2>&1 | grep "Authority" || echo "  (ad-hoc)"
+elif grep -q "PRODUCTION_SIGNING" "$DEST/Contents/Info.plist" 2>/dev/null || \
+     codesign -dv "$DEST" 2>&1 | grep -q "Developer ID"; then
+  # Was signed with Developer ID but now invalid - FAIL
+  echo "ERROR: Production app signature invalid - cannot install" >&2
+  echo "       Developer ID signature verification failed" >&2
+  exit 1
+else
+  # Development build - re-sign with ad-hoc
+  echo "Development: Re-signing with ad-hoc"
+  codesign --force --sign - "$DEST" 2>/dev/null || true
 fi
 touch "$DEST_DIR"
 

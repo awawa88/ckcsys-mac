@@ -122,20 +122,8 @@ if $PRODUCTION_MODE; then
     exit 1
   fi
   
-  # Check if entitlements are needed
-  # For IMK apps, usually none are required unless using specific APIs
-  ENTITLEMENTS_FILE=""
-  if [[ -f "$(dirname "$0")/entitlements.plist" ]]; then
-    ENTITLEMENTS_FILE="$(dirname "$0")/entitlements.plist"
-    echo "    Entitlements: $ENTITLEMENTS_FILE"
-  fi
-  
   # Production signing uses proper nested order (no --deep shortcut)
-  # Sign from innermost to outermost
-  
-  # 1. Sign any frameworks or nested bundles (none currently in Ckcsys)
-  # 2. Sign main executable
-  # 3. Sign app bundle
+  # IMK apps typically need no entitlements unless using specific protected APIs
   
   echo "==> Signing with Developer ID Application (hardened runtime)"
   
@@ -145,10 +133,6 @@ if $PRODUCTION_MODE; then
     --options runtime
     --force
   )
-  
-  if [[ -n "$ENTITLEMENTS_FILE" ]]; then
-    SIGN_ARGS+=(--entitlements "$ENTITLEMENTS_FILE")
-  fi
   
   # Sign app bundle (includes executable)
   if ! codesign "${SIGN_ARGS[@]}" "$APP_BUNDLE" 2>&1; then
@@ -173,9 +157,10 @@ if $PRODUCTION_MODE; then
   
 else
   # Development signing with ad-hoc signature
+  # Simple bundle signing (avoid --deep shortcut)
   echo "==> Ad-hoc signing"
   
-  if ! codesign --force --deep --sign - "$APP_BUNDLE" 2>&1; then
+  if ! codesign --force --sign - "$APP_BUNDLE" 2>&1; then
     echo "ERROR: Ad-hoc signing failed" >&2
     exit 2
   fi
