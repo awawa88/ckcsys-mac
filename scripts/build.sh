@@ -89,8 +89,10 @@ done
 
 chmod +x "$MACOS/${APP_NAME}"
 
-echo "==> Ad-hoc codesign"
-codesign --force --deep --sign - "$APP"
+echo "==> Code signing"
+# Use codesign-helper for both development (ad-hoc) and production (Developer ID)
+# Production mode: set DEVELOPER_ID_APPLICATION env var
+"$ROOT/scripts/codesign-helper.sh" "$APP" ${PRODUCTION_SIGNING:+--production}
 
 echo "==> Verifying bundle"
 plutil -lint "$CONTENTS/Info.plist"

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Minimal entitlements for Ckcsys IMK Input Method -->
+	<!-- No library validation disabling, no JIT, no dangerous permissions -->
+	
+	<!-- Input Method Kit apps may need this for text insertion -->
+	<key>com.apple.security.temporary-exception.apple-events</key>
+	<array>
+		<string>com.apple.systemevents</string>
+	</array>
+	
+	<!-- Note: Most IMK apps work without any entitlements -->
+	<!-- Add more only if specific functionality requires them -->
+</dict>
+</plist>

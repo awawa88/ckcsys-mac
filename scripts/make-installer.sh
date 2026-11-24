@@ -36,8 +36,10 @@ if [[ ! -d "$BUILD_APP" ]]; then
   exit 1
 fi
 
-echo "==> Ad-hoc codesign of app bundle"
-codesign --force --deep --sign - "$BUILD_APP"
+echo "==> Code signing app bundle"
+# Use codesign-helper for both development (ad-hoc) and production (Developer ID)
+# Production mode: set DEVELOPER_ID_APPLICATION env var before running
+"$ROOT/scripts/codesign-helper.sh" "$BUILD_APP" ${PRODUCTION_SIGNING:+--production}
 
 WORKDIR="$(mktemp -d /tmp/ckc-make-installer.XXXXXX)"
 cleanup() { rm -rf "$WORKDIR"; }
@@ -117,7 +119,14 @@ else
 fi
 sleep 0.3
 
-codesign --force --deep --sign - "$DEST" 2>/dev/null || true
+# Preserve existing signature if present (don't destroy Developer ID signatures)
+# Only re-sign if unsigned or signature is invalid
+if ! codesign --verify "$DEST" 2>/dev/null; then
+  echo "Re-signing with ad-hoc (no existing valid signature)"
+  codesign --force --deep --sign - "$DEST" 2>/dev/null || true
+else
+  echo "Preserving existing code signature"
+fi
 touch "$DEST_DIR"
 
 # Launch once so IMK can register (best-effort)
@@ -297,8 +306,31 @@ cd ~/Projects/ckcsys-mac
 Bundle ID: ${BUNDLE_ID}
 EOF
 
+# Sign the installer package if Developer ID Installer identity is provided
+if [[ -n "${DEVELOPER_ID_INSTALLER:-}" ]]; then
+  echo ""
+  echo "==> Signing installer package with Developer ID Installer"
+  TEMP_UNSIGNED_PKG="$OUT_PKG.unsigned"
+  mv "$OUT_PKG" "$TEMP_UNSIGNED_PKG"
+  
+  if ! productsign --sign "$DEVELOPER_ID_INSTALLER" "$TEMP_UNSIGNED_PKG" "$OUT_PKG"; then
+    echo "ERROR: Package signing failed" >&2
+    mv "$TEMP_UNSIGNED_PKG" "$OUT_PKG"
+    echo "WARNING: Installer package is UNSIGNED" >&2
+  else
+    rm -f "$TEMP_UNSIGNED_PKG"
+    echo "✓ Package signed with: $DEVELOPER_ID_INSTALLER"
+  fi
+elif [[ "${PRODUCTION_SIGNING:-}" == "1" ]]; then
+  echo ""
+  echo "ERROR: PRODUCTION_SIGNING=1 but DEVELOPER_ID_INSTALLER not set" >&2
+  echo "       Package will be UNSIGNED (not suitable for distribution)" >&2
+  exit 1
+fi
+
 echo ""
 echo "INSTALLER OK"
 ls -lh "$OUT_PKG" "$OUT_README"
-pkgutil --check-signature "$OUT_PKG" 2>&1 || true
+echo ""
+pkgutil --check-signature "$OUT_PKG" 2>&1 || echo "Package signature: unsigned"
 echo "PKG: $OUT_PKG"
