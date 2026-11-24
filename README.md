@@ -23,7 +23,7 @@ Public home: https://github.com/awawa88/ckcsys-mac
 Prebuilt installer (GitHub Releases):
 
 - **Latest release:** https://github.com/awawa88/ckcsys-mac/releases/latest
-- **v0.2.77 pkg:** https://github.com/awawa88/ckcsys-mac/releases/download/v0.2.77/Ckcsys-Installer.pkg
+- **v0.2.78 pkg:** https://github.com/awawa88/ckcsys-mac/releases/download/v0.2.78/Ckcsys-Installer.pkg
 
 Double-click the `.pkg` to install into `~/Library/Input Methods/Ckcsys.app`, then add **Ckcsys** under System Settings → Keyboard → Input Sources. The app is ad-hoc signed; the installer package is unsigned and not notarized. macOS may require explicit approval in System Settings → Privacy & Security.
 
