@@ -57,18 +57,45 @@ rm -rf "$DEST_DIR/CKC縱橫.app"
 cp -R "$SRC" "$DEST"
 
 # Verify and preserve signatures
-# Development: Re-sign with ad-hoc if invalid/missing
-# Production: FAIL if signature invalid (never downgrade to ad-hoc)
-if codesign --verify "$DEST" 2>/dev/null; then
-  echo "Preserving existing code signature"
-  codesign -dv "$DEST" 2>&1 | grep "Authority" || echo "  (ad-hoc)"
-elif [[ "${PRODUCTION_SIGNING:-}" == "1" ]]; then
-  echo "ERROR: Production install requires valid Developer ID signature" >&2
-  echo "       App signature is invalid or missing" >&2
-  echo "       Build must be signed before installation in production mode" >&2
-  exit 1
+# Production: Require Developer ID with correct team, fail on ad-hoc/wrong-team/invalid
+# Development: Re-sign with ad-hoc if needed
+if [[ "${PRODUCTION_SIGNING:-}" == "1" ]]; then
+  # Production mode: strict validation required
+  if ! codesign --verify "$DEST" 2>/dev/null; then
+    echo "ERROR: Production install requires valid signature" >&2
+    echo "       Signature verification failed" >&2
+    exit 1
+  fi
+  
+  # Check it's Developer ID (not ad-hoc)
+  SIG_INFO=$(codesign -dv "$DEST" 2>&1)
+  if ! echo "$SIG_INFO" | grep -q "Authority=Developer ID Application"; then
+    echo "ERROR: Production install requires Developer ID Application signature" >&2
+    echo "       Found: $(echo "$SIG_INFO" | grep "Authority" | head -1 || echo "ad-hoc")" >&2
+    exit 1
+  fi
+  
+  # Verify team if DEVELOPER_ID_APPLICATION set
+  if [[ -n "${DEVELOPER_ID_APPLICATION:-}" ]]; then
+    EXPECTED_TEAM=$(echo "$DEVELOPER_ID_APPLICATION" | sed -n 's/.*(\([^)]*\)).*/\1/p')
+    if [[ -n "$EXPECTED_TEAM" ]] && ! echo "$SIG_INFO" | grep -q "$EXPECTED_TEAM"; then
+      echo "ERROR: Production install signature team mismatch" >&2
+      echo "       Expected team: $EXPECTED_TEAM" >&2
+      echo "       Found: $(echo "$SIG_INFO" | grep "TeamIdentifier" || echo "unknown")" >&2
+      exit 1
+    fi
+  fi
+  
+  echo "Production: Preserving Developer ID signature"
+  echo "$SIG_INFO" | grep "Authority" | head -1
+  
+elif codesign --verify "$DEST" 2>/dev/null; then
+  # Development with valid signature: preserve it
+  echo "Development: Preserving existing signature"
+  codesign -dv "$DEST" 2>&1 | grep "Authority" | head -1 || echo "  (ad-hoc)"
 else
-  echo "Development: Re-signing with ad-hoc (no existing valid signature)"
+  # Development with invalid/missing signature: re-sign with ad-hoc
+  echo "Development: Re-signing with ad-hoc"
   codesign --force --sign - "$DEST"
 fi
 

@@ -53,8 +53,44 @@ mkdir -p "$PAYLOAD" "$SCRIPTS" "$RES_DIR"
 echo "==> Staging payload (relative to user home via installer domain)"
 ditto "$BUILD_APP" "$PAYLOAD/${APP_NAME}.app"
 
-# postinstall: finalize ownership, re-sign, register, show instructions
-cat > "$SCRIPTS/postinstall" << 'POST'
+# Generate postinstall script based on production vs development mode
+# Production: Verifies expected Developer ID team, fails on invalid/ad-hoc/wrong-team
+# Development: Re-signs with ad-hoc if needed
+if [[ "${PRODUCTION_SIGNING:-}" == "1" ]]; then
+  # Extract expected team from DEVELOPER_ID_APPLICATION
+  EXPECTED_TEAM=""
+  if [[ -n "${DEVELOPER_ID_APPLICATION:-}" ]]; then
+    EXPECTED_TEAM=$(echo "$DEVELOPER_ID_APPLICATION" | sed -n 's/.*(\([^)]*\)).*/\1/p')
+  fi
+  
+  echo "==> Generating PRODUCTION postinstall (requires Developer ID signature)"
+  [[ -n "$EXPECTED_TEAM" ]] && echo "    Expected team: $EXPECTED_TEAM"
+  
+  # Production postinstall - FAIL on any invalid/missing/ad-hoc/wrong-team signature
+  cat > "$SCRIPTS/postinstall" <<POST
+#!/bin/bash
+# PRODUCTION postinstall - generated at package build time
+# NEVER downgrades Developer ID signatures to ad-hoc
+set -euo pipefail
+
+EXPECTED_TEAM="$EXPECTED_TEAM"
+POST
+else
+  echo "==> Generating DEVELOPMENT postinstall (ad-hoc re-signing allowed)"
+  
+  # Development postinstall - re-signs with ad-hoc if needed
+  cat > "$SCRIPTS/postinstall" <<'POST'
+#!/bin/bash
+# DEVELOPMENT postinstall - generated at package build time
+# Re-signs with ad-hoc if signature invalid/missing
+set -euo pipefail
+
+EXPECTED_TEAM=""
+POST
+fi
+
+# Common postinstall body (same for both modes)
+cat >> "$SCRIPTS/postinstall" << 'POST'
 #!/bin/bash
 set -euo pipefail
 
@@ -119,22 +155,45 @@ else
 fi
 sleep 0.3
 
-# Verify signature - NEVER downgrade production Developer ID to ad-hoc
-# Production pkg: Fail if signature invalid (payload must be properly signed)
-# Development pkg: Re-sign with ad-hoc if needed
-if codesign --verify "$DEST" 2>/dev/null; then
-  echo "Preserving existing code signature"
-  codesign -dv "$DEST" 2>&1 | grep "Authority" || echo "  (ad-hoc)"
-elif grep -q "PRODUCTION_SIGNING" "$DEST/Contents/Info.plist" 2>/dev/null || \
-     codesign -dv "$DEST" 2>&1 | grep -q "Developer ID"; then
-  # Was signed with Developer ID but now invalid - FAIL
-  echo "ERROR: Production app signature invalid - cannot install" >&2
-  echo "       Developer ID signature verification failed" >&2
-  exit 1
+# Signature verification - behavior determined at package build time
+# Production: Requires Developer ID with expected team
+# Development: Re-signs with ad-hoc if needed
+if [[ -n "$EXPECTED_TEAM" ]]; then
+  # PRODUCTION package: strict validation
+  echo "Production package: Verifying Developer ID signature"
+  
+  if ! codesign --verify "$DEST" 2>/dev/null; then
+    echo "ERROR: Signature verification failed" >&2
+    exit 1
+  fi
+  
+  SIG_INFO=$(codesign -dv "$DEST" 2>&1)
+  
+  # Check it's Developer ID (not ad-hoc)
+  if ! echo "$SIG_INFO" | grep -q "Authority=Developer ID Application"; then
+    echo "ERROR: Requires Developer ID Application signature" >&2
+    echo "       Found: $(echo "$SIG_INFO" | grep "Authority" | head -1 || echo "ad-hoc")" >&2
+    exit 1
+  fi
+  
+  # Verify expected team
+  if ! echo "$SIG_INFO" | grep -q "$EXPECTED_TEAM"; then
+    echo "ERROR: Signature team mismatch" >&2
+    echo "       Expected: $EXPECTED_TEAM" >&2
+    echo "       Found: $(echo "$SIG_INFO" | grep "TeamIdentifier" | head -1 || echo "unknown")" >&2
+    exit 1
+  fi
+  
+  echo "✓ Developer ID signature valid (team: $EXPECTED_TEAM)"
+  
 else
-  # Development build - re-sign with ad-hoc
-  echo "Development: Re-signing with ad-hoc"
-  codesign --force --sign - "$DEST" 2>/dev/null || true
+  # DEVELOPMENT package: allow ad-hoc re-signing
+  if codesign --verify "$DEST" 2>/dev/null; then
+    echo "Development: Preserving existing signature"
+  else
+    echo "Development: Re-signing with ad-hoc"
+    codesign --force --sign - "$DEST" 2>/dev/null || true
+  fi
 fi
 touch "$DEST_DIR"
 
