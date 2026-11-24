@@ -23,13 +23,13 @@ Public home: https://github.com/awawa88/ckcsys-mac
 Prebuilt installer (GitHub Releases):
 
 - **Latest release:** https://github.com/awawa88/ckcsys-mac/releases/latest
-- **v0.2.77 pkg:** https://github.com/awawa88/ckcsys-mac/releases/download/v0.2.77/Ckcsys-Installer.pkg
+- **v0.2.78 pkg:** https://github.com/awawa88/ckcsys-mac/releases/download/v0.2.78/Ckcsys-Installer.pkg
 
 Double-click the `.pkg` to install into `~/Library/Input Methods/Ckcsys.app`, then add **Ckcsys** under System Settings → Keyboard → Input Sources. The app is ad-hoc signed; the installer package is unsigned and not notarized. macOS may require explicit approval in System Settings → Privacy & Security.
 
-### What's New in v0.2.77
+### What's New in v0.2.78
 
-- **Cantonese Phrases**: Added 616052 唔使 and other common Cantonese expressions
+- **Cantonese Phrases**: Added 13 custom phrases (333429 心機, 406140 好唔好, 47811 超正, 581704 整髮, 616002 唔係, 616404 唔好, 616607 唔見, 61686 唔會, 616868 唔知, 618638 唔知道, 647000 咁多, 680680 睇睇, 866838 知唔知道) plus earlier 616052 唔使 and other common expressions
 - **Mouse-Driven Close**: Upper-left red glass button with hover-only × to dismiss candidate window
 - **Compact Console Icons**: Mode/anchor/appearance buttons now show icons instead of text
   - White icons in dark mode, dark icons in light mode (proper template tinting)
