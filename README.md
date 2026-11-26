@@ -27,6 +27,16 @@ Prebuilt installer (GitHub Releases):
 
 Double-click the `.pkg` to install into `~/Library/Input Methods/Ckcsys.app`, then add **Ckcsys** under System Settings → Keyboard → Input Sources. The app is ad-hoc signed; the installer package is unsigned and not notarized. macOS may require explicit approval in System Settings → Privacy & Security.
 
+### What's New in v0.2.78
+
+- **Cantonese Phrases**: Added 13 custom phrases (333429 心機, 406140 好唔好, 47811 超正, 581704 整髮, 616002 唔係, 616404 唔好, 616607 唔見, 61686 唔會, 616868 唔知, 618638 唔知道, 647000 咁多, 680680 睇睇, 866838 知唔知道) plus earlier 616052 唔使 and other common expressions
+- **Mouse-Driven Close**: Upper-left red glass button with hover-only × to dismiss candidate window
+- **Compact Console Icons**: Mode/anchor/appearance buttons now show icons instead of text
+  - White icons in dark mode, dark icons in light mode (proper template tinting)
+  - Numpad/keyboard icon switches based on digit source mode
+- **Flaticon Assets**: Professional telephone keypad, anchor, and contrast icons
+- **Retina Support**: Glass effects and icons render crisply at all display scales
+
 ## Build / install
 
 ```bash
@@ -117,4 +127,13 @@ build/     Ckcsys.app (gitignored)
 - Display name: **Ckcsys**
 - Bundle ID: `com.andrewlam.inputmethod.ckc` (internal — UI shows Ckcsys)
 - App icon: `AppIcon` · menu bar: `menuIcon`
+
+## Icon Credits
+
+StatusConsole button icons from [Flaticon](https://www.flaticon.com/):
+- **Numpad icon:** [call_13132476](https://www.flaticon.com/free-icon/call_13132476)
+- **Anchor icon:** [anchor_17153611](https://www.flaticon.com/free-icon/anchor_17153611) by [ifans28](https://www.flaticon.com/authors/ifans28)
+- **Contrast icon:** [contrast_18382019](https://www.flaticon.com/free-icon/contrast_18382019) by [meaicon](https://www.flaticon.com/authors/meaicon)
+
+Keyboard icon is a programmatically drawn vector based on Andrew's supplied design.
 

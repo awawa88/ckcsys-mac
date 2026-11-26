@@ -1,3 +1,22 @@
+## Local 0.2.78 (build 80) — shared lexicon: Andrew custom phrases
+
+Added 13 custom phrases (pd 50000, first under each code) to cht_cimb_VISTA.tsv:
+心機 333429, 好唔好 406140, 超正 47811, 整髮 581704, 唔係 616002, 唔好 616404, 唔見 616607, 唔會 61686, 唔知 616868, 唔知道 618638, 咁多 647000, 睇睇 680680, 知唔知道 866838.
+
+Versions: Mac **0.2.78** (80) · iOS Debug **0.1.107** (138)
+
+## Local 0.2.64 (build 66) — shared lexicon: 唔使
+
+Ask: add 唔使 616052 (new code, appended; pd 50000).
+
+- Prior batch (0.2.63): 而家 120303, 試一吓 33161, 試吓 336613, 邊到 363121, 超好 478404, 大灣區 483271, 唔值得 610406, 點解 613070, 嗰度 66304, 除咗 782641.
+- Already present: (none). Same phrase under other codes: (none).
+- Prove: `python3 scripts/prove_cantonese_phrases.py`
+
+Versions: Mac **0.2.64** (66)
+
+---
+
 ## Local 0.2.60 (build 62) — StatusConsole light/dark toggle
 
 Ask: real light mode for Mac IME chrome, plus a StatusConsole button that switches dark ↔ light.

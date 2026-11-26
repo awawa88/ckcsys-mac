@@ -80,10 +80,19 @@ if [[ -f "$ROOT/Resources/menuIcon.icns" ]]; then
   cp "$ROOT/Resources/menuIcon.icns" "$RES/menuIcon.icns"
 fi
 
+# StatusConsole button icons (Flaticon assets; keyboard is programmatic)
+for icon in numpad-icon.png anchor-icon.png contrast-icon.png; do
+  if [[ -f "$ROOT/Resources/$icon" ]]; then
+    cp "$ROOT/Resources/$icon" "$RES/$icon"
+  fi
+done
+
 chmod +x "$MACOS/${APP_NAME}"
 
-echo "==> Ad-hoc codesign"
-codesign --force --deep --sign - "$APP"
+echo "==> Code signing"
+# Use codesign-helper for both development (ad-hoc) and production (Developer ID)
+# Production mode: set DEVELOPER_ID_APPLICATION env var
+"$ROOT/scripts/codesign-helper.sh" "$APP" ${PRODUCTION_SIGNING:+--production}
 
 echo "==> Verifying bundle"
 plutil -lint "$CONTENTS/Info.plist"

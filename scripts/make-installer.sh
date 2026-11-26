@@ -36,8 +36,10 @@ if [[ ! -d "$BUILD_APP" ]]; then
   exit 1
 fi
 
-echo "==> Ad-hoc codesign of app bundle"
-codesign --force --deep --sign - "$BUILD_APP"
+echo "==> Code signing app bundle"
+# Use codesign-helper for both development (ad-hoc) and production (Developer ID)
+# Production mode: set DEVELOPER_ID_APPLICATION env var before running
+"$ROOT/scripts/codesign-helper.sh" "$BUILD_APP" ${PRODUCTION_SIGNING:+--production}
 
 WORKDIR="$(mktemp -d /tmp/ckc-make-installer.XXXXXX)"
 cleanup() { rm -rf "$WORKDIR"; }
@@ -51,8 +53,44 @@ mkdir -p "$PAYLOAD" "$SCRIPTS" "$RES_DIR"
 echo "==> Staging payload (relative to user home via installer domain)"
 ditto "$BUILD_APP" "$PAYLOAD/${APP_NAME}.app"
 
-# postinstall: finalize ownership, re-sign, register, show instructions
-cat > "$SCRIPTS/postinstall" << 'POST'
+# Generate postinstall script based on production vs development mode
+# Production: Verifies expected Developer ID team, fails on invalid/ad-hoc/wrong-team
+# Development: Re-signs with ad-hoc if needed
+if [[ "${PRODUCTION_SIGNING:-}" == "1" ]]; then
+  # Extract expected team from DEVELOPER_ID_APPLICATION
+  EXPECTED_TEAM=""
+  if [[ -n "${DEVELOPER_ID_APPLICATION:-}" ]]; then
+    EXPECTED_TEAM=$(echo "$DEVELOPER_ID_APPLICATION" | sed -n 's/.*(\([^)]*\)).*/\1/p')
+  fi
+  
+  echo "==> Generating PRODUCTION postinstall (requires Developer ID signature)"
+  [[ -n "$EXPECTED_TEAM" ]] && echo "    Expected team: $EXPECTED_TEAM"
+  
+  # Production postinstall - FAIL on any invalid/missing/ad-hoc/wrong-team signature
+  cat > "$SCRIPTS/postinstall" <<POST
+#!/bin/bash
+# PRODUCTION postinstall - generated at package build time
+# NEVER downgrades Developer ID signatures to ad-hoc
+set -euo pipefail
+
+EXPECTED_TEAM="$EXPECTED_TEAM"
+POST
+else
+  echo "==> Generating DEVELOPMENT postinstall (ad-hoc re-signing allowed)"
+  
+  # Development postinstall - re-signs with ad-hoc if needed
+  cat > "$SCRIPTS/postinstall" <<'POST'
+#!/bin/bash
+# DEVELOPMENT postinstall - generated at package build time
+# Re-signs with ad-hoc if signature invalid/missing
+set -euo pipefail
+
+EXPECTED_TEAM=""
+POST
+fi
+
+# Common postinstall body (same for both modes)
+cat >> "$SCRIPTS/postinstall" << 'POST'
 #!/bin/bash
 set -euo pipefail
 
@@ -117,7 +155,46 @@ else
 fi
 sleep 0.3
 
-codesign --force --deep --sign - "$DEST" 2>/dev/null || true
+# Signature verification - behavior determined at package build time
+# Production: Requires Developer ID with expected team
+# Development: Re-signs with ad-hoc if needed
+if [[ -n "$EXPECTED_TEAM" ]]; then
+  # PRODUCTION package: strict validation
+  echo "Production package: Verifying Developer ID signature"
+  
+  if ! codesign --verify "$DEST" 2>/dev/null; then
+    echo "ERROR: Signature verification failed" >&2
+    exit 1
+  fi
+  
+  SIG_INFO=$(codesign -dv "$DEST" 2>&1)
+  
+  # Check it's Developer ID (not ad-hoc)
+  if ! echo "$SIG_INFO" | grep -q "Authority=Developer ID Application"; then
+    echo "ERROR: Requires Developer ID Application signature" >&2
+    echo "       Found: $(echo "$SIG_INFO" | grep "Authority" | head -1 || echo "ad-hoc")" >&2
+    exit 1
+  fi
+  
+  # Verify expected team
+  if ! echo "$SIG_INFO" | grep -q "$EXPECTED_TEAM"; then
+    echo "ERROR: Signature team mismatch" >&2
+    echo "       Expected: $EXPECTED_TEAM" >&2
+    echo "       Found: $(echo "$SIG_INFO" | grep "TeamIdentifier" | head -1 || echo "unknown")" >&2
+    exit 1
+  fi
+  
+  echo "✓ Developer ID signature valid (team: $EXPECTED_TEAM)"
+  
+else
+  # DEVELOPMENT package: allow ad-hoc re-signing
+  if codesign --verify "$DEST" 2>/dev/null; then
+    echo "Development: Preserving existing signature"
+  else
+    echo "Development: Re-signing with ad-hoc"
+    codesign --force --sign - "$DEST" 2>/dev/null || true
+  fi
+fi
 touch "$DEST_DIR"
 
 # Launch once so IMK can register (best-effort)
@@ -297,8 +374,31 @@ cd ~/Projects/ckcsys-mac
 Bundle ID: ${BUNDLE_ID}
 EOF
 
+# Sign the installer package if Developer ID Installer identity is provided
+if [[ -n "${DEVELOPER_ID_INSTALLER:-}" ]]; then
+  echo ""
+  echo "==> Signing installer package with Developer ID Installer"
+  TEMP_UNSIGNED_PKG="$OUT_PKG.unsigned"
+  mv "$OUT_PKG" "$TEMP_UNSIGNED_PKG"
+  
+  if ! productsign --sign "$DEVELOPER_ID_INSTALLER" "$TEMP_UNSIGNED_PKG" "$OUT_PKG"; then
+    echo "ERROR: Package signing failed" >&2
+    mv "$TEMP_UNSIGNED_PKG" "$OUT_PKG"
+    echo "WARNING: Installer package is UNSIGNED" >&2
+  else
+    rm -f "$TEMP_UNSIGNED_PKG"
+    echo "✓ Package signed with: $DEVELOPER_ID_INSTALLER"
+  fi
+elif [[ "${PRODUCTION_SIGNING:-}" == "1" ]]; then
+  echo ""
+  echo "ERROR: PRODUCTION_SIGNING=1 but DEVELOPER_ID_INSTALLER not set" >&2
+  echo "       Package will be UNSIGNED (not suitable for distribution)" >&2
+  exit 1
+fi
+
 echo ""
 echo "INSTALLER OK"
 ls -lh "$OUT_PKG" "$OUT_README"
-pkgutil --check-signature "$OUT_PKG" 2>&1 || true
+echo ""
+pkgutil --check-signature "$OUT_PKG" 2>&1 || echo "Package signature: unsigned"
 echo "PKG: $OUT_PKG"

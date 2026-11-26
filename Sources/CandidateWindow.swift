@@ -22,6 +22,9 @@ final class CandidateWindow: NSPanel {
 
     /// Callback when a candidate is clicked: (text: String, column: CandidateColumn)
     var onCandidateClicked: ((String, CandidateColumn) -> Void)?
+    
+    /// Callback when the close button is clicked: dismiss without inserting any candidate
+    var onCloseButtonClicked: (() -> Void)?
 
     private let pageSize = 9
     private var charCandidates: [String] = []
@@ -35,6 +38,7 @@ final class CandidateWindow: NSPanel {
 
     private var effectView: NSVisualEffectView!
     private var contentStack: NSStackView!
+    private var closeButton: NSButton!
     private var pageLabel: NSTextField!
     private var hintLabel: NSTextField!
     private var columnsStack: NSStackView!
@@ -168,17 +172,32 @@ final class CandidateWindow: NSPanel {
         contentView?.layer?.backgroundColor = NSColor.clear.cgColor
 
         // Composition digits stay in the client marked text only — not duplicated here.
+        
+        // Close button — small × in header to dismiss without inserting
+        closeButton = CloseButton()
+        closeButton.target = self
+        closeButton.action = #selector(handleCloseButtonClick)
+        closeButton.toolTip = "Close (dismiss composition)"
+        closeButton.setAccessibilityLabel("Close")
+        closeButton.setAccessibilityRole(.button)
+        closeButton.setContentHuggingPriority(.required, for: .horizontal)
+        closeButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.widthAnchor.constraint(equalToConstant: 14).isActive = true
+        closeButton.heightAnchor.constraint(equalToConstant: 14).isActive = true
+        
         pageLabel = NSTextField(labelWithString: "")
         pageLabel.textColor = .tertiaryLabelColor
         pageLabel.alignment = .right
 
         let headerSpacer = NSView()
         headerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let header = NSStackView(views: [headerSpacer, pageLabel])
+        let header = NSStackView(views: [closeButton, headerSpacer, pageLabel])
         header.orientation = .horizontal
         header.distribution = .fill
         header.alignment = .centerY
         header.spacing = 8
+        closeButton.setContentHuggingPriority(.required, for: .horizontal)
         pageLabel.setContentHuggingPriority(.required, for: .horizontal)
 
         // Left column: chars numbered 1–9
@@ -599,6 +618,10 @@ final class CandidateWindow: NSPanel {
         let text = candidates[global]
         onCandidateClicked?(text, column)
     }
+    
+    @objc private func handleCloseButtonClick() {
+        onCloseButtonClicked?()
+    }
 
     // MARK: - Cursor
     // Inactive LSUIElement + .nonactivatingPanel: NSCursor.set() from a local
@@ -704,7 +727,9 @@ final class CandidateWindow: NSPanel {
         for row in charRowViews + phraseRowViews {
             row.refreshChrome()
         }
+        (closeButton as? CloseButton)?.refreshChrome()
         applyDigitPickHeaderColors()
+        closeButton?.needsDisplay = true
         pageLabel?.needsDisplay = true
         hintLabel?.needsDisplay = true
         leftTitleLabel?.needsDisplay = true
@@ -1244,5 +1269,172 @@ private final class CandidateRowView: NSButton {
             }
         }
         NSLog("%@", "[CKC] " + message)
+    }
+}
+
+// MARK: - Close Button
+
+/// macOS-style red circular close button (upper-left) for dismissing the candidate window without inserting any text.
+/// Red circle always visible; white × appears only on direct hover. Pointing hand cursor on hover.
+/// Subtle glass effect: glossy highlight gradient and gentle depth.
+private final class CloseButton: NSButton {
+    private var isHovered: Bool = false
+    private var didPushCursor: Bool = false
+    private var trackingArea: NSTrackingArea?
+    private var glassGradientLayer: CAGradientLayer?
+    
+    // macOS window close button colors
+    private static let closeButtonRed = NSColor(calibratedRed: 1.0, green: 0.373, blue: 0.341, alpha: 1.0) // #FF5F57
+    private static let closeButtonRedHover = NSColor(calibratedRed: 0.95, green: 0.32, blue: 0.29, alpha: 1.0)
+    
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        
+        isBordered = false
+        bezelStyle = .inline
+        title = ""  // × hidden by default; appears only on hover
+        font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        contentTintColor = .white
+        wantsLayer = true
+        layer?.cornerRadius = 7  // Half of 14pt diameter for perfect circle
+        layer?.backgroundColor = Self.closeButtonRed.cgColor
+        
+        // Retina display support: native vector rendering with backing scale
+        layer?.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
+        layer?.shouldRasterize = false  // Keep vector rendering, no bitmap cache
+        layer?.drawsAsynchronously = false  // Synchronous for crisp updates
+        
+        // Glass effect: subtle glossy highlight gradient for depth
+        setupGlassEffect()
+    }
+    
+    private func setupGlassEffect() {
+        guard let baseLayer = layer else { return }
+        
+        // Enhanced glossy highlight gradient - richer translucent appearance
+        let gradient = CAGradientLayer()
+        gradient.type = .axial
+        gradient.frame = CGRect(x: 0, y: 0, width: 14, height: 14)
+        gradient.cornerRadius = 7
+        gradient.masksToBounds = true
+        
+        // Stronger specular highlight at top with richer gradient
+        let highlightTop = NSColor.white.withAlphaComponent(0.60).cgColor      // Brighter specular
+        let highlightUpper = NSColor.white.withAlphaComponent(0.32).cgColor   // Upper blend
+        let highlightMid = NSColor.white.withAlphaComponent(0.10).cgColor     // Mid fade
+        let transparent = NSColor.clear.cgColor
+        gradient.colors = [highlightTop, highlightUpper, highlightMid, transparent]
+        gradient.locations = [0.0, 0.25, 0.55, 0.80]
+        gradient.startPoint = CGPoint(x: 0.5, y: 0.0)  // Top center
+        gradient.endPoint = CGPoint(x: 0.5, y: 1.0)    // Bottom center
+        
+        // Match Retina backing scale
+        gradient.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
+        
+        baseLayer.addSublayer(gradient)
+        glassGradientLayer = gradient
+        
+        // Subtle rim shadow for depth - darker edge at bottom
+        let rimLayer = CAGradientLayer()
+        rimLayer.type = .axial
+        rimLayer.frame = CGRect(x: 0, y: 0, width: 14, height: 14)
+        rimLayer.cornerRadius = 7
+        rimLayer.masksToBounds = true
+        
+        // Subtle dark rim at bottom for depth/shading
+        let rimTransparent = NSColor.clear.cgColor
+        let rimShade = NSColor.black.withAlphaComponent(0.18).cgColor
+        rimLayer.colors = [rimTransparent, rimShade]
+        rimLayer.locations = [0.70, 1.0]
+        rimLayer.startPoint = CGPoint(x: 0.5, y: 0.0)
+        rimLayer.endPoint = CGPoint(x: 0.5, y: 1.0)
+        rimLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
+        
+        baseLayer.addSublayer(rimLayer)
+    }
+    
+    required init?(coder: NSCoder) { fatalError("init(coder:)") }
+    
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // Update backing scale when moving between displays (Retina ↔ non-Retina)
+        if let screen = window?.screen ?? NSScreen.main {
+            let scale = screen.backingScaleFactor
+            layer?.contentsScale = scale
+            glassGradientLayer?.contentsScale = scale
+        }
+    }
+    
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let options: NSTrackingArea.Options = [
+            .activeAlways,
+            .mouseMoved,
+            .mouseEnteredAndExited,
+            .inVisibleRect,
+        ]
+        let area = NSTrackingArea(rect: .zero, options: options, owner: self, userInfo: nil)
+        addTrackingArea(area)
+        trackingArea = area
+    }
+    
+    override func mouseEntered(with event: NSEvent) {
+        setHovered(true)
+        pushHandCursorIfNeeded()
+    }
+    
+    override func mouseMoved(with event: NSEvent) {
+        if !isHovered {
+            setHovered(true)
+        }
+        pushHandCursorIfNeeded()
+    }
+    
+    override func mouseExited(with event: NSEvent) {
+        setHovered(false)
+        popHandCursorIfNeeded()
+    }
+    
+    private func pushHandCursorIfNeeded() {
+        guard !didPushCursor else { return }
+        NSCursor.pointingHand.push()
+        didPushCursor = true
+    }
+    
+    private func popHandCursorIfNeeded() {
+        guard didPushCursor else { return }
+        NSCursor.pop()
+        didPushCursor = false
+    }
+    
+    private func setHovered(_ hovered: Bool) {
+        guard isHovered != hovered else { return }
+        isHovered = hovered
+        applyChrome()
+    }
+    
+    fileprivate func refreshChrome() {
+        applyChrome()
+    }
+    
+    private func applyChrome() {
+        IMEAppearance.resolved.nsAppearance.performAsCurrentDrawingAppearance {
+            if isHovered {
+                // Show × and use darker red on hover
+                title = "×"
+                layer?.backgroundColor = Self.closeButtonRedHover.cgColor
+                contentTintColor = .white
+            } else {
+                // Hide × and use normal red when not hovering
+                title = ""
+                layer?.backgroundColor = Self.closeButtonRed.cgColor
+                contentTintColor = .white
+            }
+        }
     }
 }

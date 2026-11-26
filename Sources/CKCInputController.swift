@@ -196,6 +196,20 @@ class CKCInputController: IMKInputController {
                 self.commit(text, client: self.currentClient)
             }
         }
+        // Wire close button callback to dismiss without inserting
+        CandidateWindow.shared.onCloseButtonClicked = { [weak self] in
+            guard let self else { return }
+            self.ckcLog("close button clicked → dismiss composition")
+            if self.punctMode {
+                self.exitPunctMode()
+            } else if !self.buffer.isEmpty {
+                self.clearComposition(client: self.currentClient)
+            } else if self.hasAssociation {
+                self.clearAssociation()
+            } else {
+                CandidateWindow.shared.hide()
+            }
+        }
         CandidateWindow.shared.applyDigitModeLabels(digitSource: StatusConsole.shared.digitSource)
         let clientId = clientBundleId(sender)
         if clientId == "com.apple.Notes" || clientId == "com.apple.MobileSMS" {
